@@ -3,6 +3,7 @@
 # No overlay configured: logs it and exits 0 (nothing to sync). Any failure sends a macOS notification and exits non-zero;
 # nothing is committed in either repo if export (including its secret/leak scans) fails. Overlay: see lib/overlay.sh.
 set -uo pipefail
+export USER="${USER:-$(id -un)}" LOGNAME="${LOGNAME:-$(id -un)}"  # AC 86: claude/gh need USER for Keychain auth; launchd may not set it
 ROOT="$(cd "$(dirname "$0")" && pwd)"   # setup/
 REPO="$(cd "$ROOT/.." && pwd)"           # public repo
 . "$ROOT/lib/overlay.sh"

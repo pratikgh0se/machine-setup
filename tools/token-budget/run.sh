@@ -3,6 +3,7 @@
 # Usage: run.sh [--catch-up] [--force]
 # Exit: 0 ok/no-op; 10 probe failed; 11 analyze failed; 12 report failed.
 set -u
+export USER="${USER:-$(id -un)}" LOGNAME="${LOGNAME:-$(id -un)}"  # AC 86: claude/gh need USER for Keychain auth; launchd may not set it
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CATCH=0; FORCE=0
 for a in "$@"; do
