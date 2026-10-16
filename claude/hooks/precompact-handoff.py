@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """PreCompact hook: deterministic handoff file. No LLM, no network. Always exits 0."""
-import json, os, sys, time, subprocess, shutil, glob, datetime, tempfile
+import json, os, sys, time, subprocess, shutil, glob, datetime, tempfile, re, hashlib
 
 if os.environ.get("HANDOFF_HOOK_CHILD"):  # spawned by our own Haiku fallback: never recurse
     sys.exit(0)
@@ -36,13 +36,42 @@ def genuine(t):
     return True
 
 
+def ts_ms(v):
+    """ISO-8601 string -> epoch ms, or None."""
+    try:
+        if not isinstance(v, str) or not v:
+            return None
+        return datetime.datetime.fromisoformat(v.replace("Z", "+00:00")).timestamp() * 1000
+    except Exception:
+        return None
+
+
+def result_text(c):
+    if isinstance(c, str):
+        return c
+    if isinstance(c, list):
+        return "\n".join(b.get("text", "") for b in c if isinstance(b, dict) and isinstance(b.get("text"), str))
+    return ""
+
+
+def one_line(v, n):
+    return trunc(str(v if v is not None else "").replace("\r", " ").replace("\n", " "), n)
+
+
+QA_RE = re.compile(r'"([^"]*)"="([^"]*)"')
+
+
 def parse(path):
-    users, last_asst, files, tasks, cmds = [], "", [], {}, []
+    """Single pass over the transcript. Returns a dict; never raises."""
+    P = {"users": [], "asst": "", "files": [], "tasks": {}, "cmds": [], "todos": None,
+         "qa": [], "bg": [], "user_events": [], "tool_events": [], "last_user": None}
     n_created = 0
+    asks = {}  # tool_use_id -> list of (header, question)
+    bgs = {}   # tool_use_id -> bg record
     try:
         fh = open(path, encoding="utf-8", errors="replace")
     except Exception:
-        return users, last_asst, files, tasks, cmds
+        return P
     with fh:
         for line in fh:
             try:
@@ -51,29 +80,65 @@ def parse(path):
                 continue
             if not isinstance(o, dict):
                 continue
+            if "<task-id>" in line and re.search(r"completed|failed|killed", line):
+                for r in P["bg"]:
+                    if not r["done"] and r["id"] and f"<task-id>{r['id']}</task-id>" in line:
+                        r["done"] = True
             msg = o.get("message")
             if not isinstance(msg, dict):
                 continue
             t = o.get("type")
-            if t == "user" and not o.get("isMeta"):
-                c = msg.get("content")
-                if isinstance(c, list) and any(isinstance(b, dict) and b.get("type") == "tool_result" for b in c):
-                    continue
-                tx = text_of(c)
-                if genuine(tx):
-                    users.append(tx.strip())
-            elif t == "assistant":
-                c = msg.get("content")
-                tx = text_of(c).strip()
-                if tx:
-                    last_asst = tx
-                if isinstance(c, list):
+            ts = ts_ms(o.get("timestamp"))
+            try:
+                if t == "user":
+                    c = msg.get("content")
+                    tx_all = text_of(c).strip() if not isinstance(c, str) else c.strip()
+                    if tx_all.startswith("<task-notification"):
+                        for r in P["bg"]:
+                            if r["done"]:
+                                continue
+                            if (r["id"] and r["id"] in tx_all) or (not r["id"] and r["desc"] and r["desc"] in tx_all):
+                                r["done"] = True
+                    if o.get("isMeta"):
+                        continue
+                    if isinstance(c, list) and any(isinstance(b, dict) and b.get("type") == "tool_result" for b in c):
+                        tur = o.get("toolUseResult")
+                        for b in c:
+                            if not isinstance(b, dict) or b.get("type") != "tool_result":
+                                continue
+                            tid = b.get("tool_use_id")
+                            if tid in asks:
+                                extract_answers(P, asks.pop(tid), b, tur)
+                            if tid in bgs:
+                                r = bgs.pop(tid)
+                                aid = tur.get("agentId") if isinstance(tur, dict) else None
+                                if not isinstance(aid, str) or not aid:
+                                    m = re.search(r"agent_?[iI]d:\s*(\S+)", result_text(b.get("content")))
+                                    aid = m.group(1).strip(".,;") if m else None
+                                r["id"] = aid
+                        continue
+                    tx = text_of(c)
+                    if genuine(tx):
+                        P["users"].append(tx.strip())
+                        if ts is not None:
+                            P["last_user"] = ts
+                            P["user_events"].append(ts)
+                elif t == "assistant":
+                    c = msg.get("content")
+                    tx = text_of(c).strip()
+                    if tx:
+                        P["asst"] = tx
+                    if not isinstance(c, list):
+                        continue
                     for b in c:
                         if not isinstance(b, dict) or b.get("type") != "tool_use":
                             continue
+                        if ts is not None:
+                            P["tool_events"].append(ts)
                         name, inp = b.get("name", ""), b.get("input") or {}
                         if not isinstance(inp, dict):
                             continue
+                        files, tasks = P["files"], P["tasks"]
                         if name in ("Edit", "Write", "NotebookEdit", "MultiEdit"):
                             fp = inp.get("file_path") or inp.get("notebook_path")
                             if fp:
@@ -81,7 +146,7 @@ def parse(path):
                                     files.remove(fp)
                                 files.append(fp)
                         elif name == "Bash" and inp.get("command"):
-                            cmds.append(inp["command"])
+                            P["cmds"].append(inp["command"])
                         elif name == "TaskCreate":
                             n_created += 1
                             tasks[str(n_created)] = {"subject": inp.get("subject", ""), "status": "pending"}
@@ -92,7 +157,51 @@ def parse(path):
                                 d["subject"] = inp["subject"]
                             if inp.get("status"):
                                 d["status"] = inp["status"]
-    return users, last_asst, files, tasks, cmds
+                        elif name == "TodoWrite":
+                            td = inp.get("todos")
+                            if isinstance(td, list):
+                                P["todos"] = [x for x in td if isinstance(x, dict)]
+                        elif name == "AskUserQuestion":
+                            qs = inp.get("questions")
+                            if isinstance(qs, list) and isinstance(b.get("id"), str):
+                                asks[b["id"]] = [(q.get("header"), q.get("question")) for q in qs
+                                                 if isinstance(q, dict) and isinstance(q.get("question"), str)]
+                        elif (name == "Agent" or (name == "Task" and inp.get("subagent_type"))) \
+                                and inp.get("run_in_background") is True:
+                            r = {"desc": str(inp.get("description") or ""), "model": inp.get("model"),
+                                 "id": None, "done": False}
+                            P["bg"].append(r)
+                            if isinstance(b.get("id"), str):
+                                bgs[b["id"]] = r
+            except Exception:
+                continue
+    return P
+
+
+def extract_answers(P, qs, block, tur):
+    """Pair the questions of one AskUserQuestion call with their answers."""
+    if block.get("is_error") is True:
+        return
+    answers, ann = None, {}
+    if isinstance(tur, dict):
+        if isinstance(tur.get("answers"), dict):
+            answers = tur["answers"]
+        if isinstance(tur.get("annotations"), dict):
+            ann = tur["annotations"]
+    if answers is None:
+        answers = dict(QA_RE.findall(result_text(block.get("content"))))
+    for header, q in qs:
+        a = answers.get(q)
+        if isinstance(a, list):
+            a = ", ".join(str(x) for x in a)
+        if a is None or not isinstance(a, (str, int, float)) or str(a).strip() == "":
+            continue
+        note = ann.get(q).get("notes") if isinstance(ann.get(q), dict) else None
+        line = "- " + (f"[{one_line(header, 200)}] " if isinstance(header, str) and header.strip() else "")
+        line += f"{one_line(q, 200)} -> {one_line(a, 200)}"
+        if isinstance(note, str) and note.strip():
+            line += f" (notes: {one_line(note, 200)})"
+        P["qa"].append(line)
 
 
 def git(cwd):
@@ -116,6 +225,11 @@ AGENT_CAP = 5000
 FRESH_TOKENS = 50000
 FRESH_NO_META_MS = 30 * 60 * 1000
 MIN_AGENT_BYTES = 300
+FRESH_GRACE_MS = 600000
+STALE_USER_TURNS = 3
+STALE_TOOL_CALLS = 40
+HEADINGS = ["Goal", "Decisions and why", "Done", "In progress", "Dead ends", "Exact next step"]
+STALE_NAMES = ["In progress", "Exact next step"]
 HAIKU_TIMEOUT = 75
 HAIKU_SYSTEM = ("You write handoff notes for an agent resuming work after context compaction. "
                 "The user message contains a transcript excerpt inside <transcript>...</transcript> tags. "
@@ -147,23 +261,71 @@ def is_fresh(meta, size, mtime_ms, now_ms):
     return ctx is not None and wt is not None and (ctx - wt) <= FRESH_TOKENS
 
 
-def read_agent(sid):
-    """Return agent handoff body if fresh, else None."""
+def section_hashes(text):
+    """F35.1 hashes: heading (no '## ') -> first 12 hex of SHA-256 of the body, or 'absent'."""
+    bodies, cur = {}, None
+    for ln in text.replace("\r\n", "\n").split("\n"):
+        if ln.startswith("## "):
+            h = ln[3:]
+            cur = [] if (ln == "## " + h and h in HEADINGS and h not in bodies) else None
+            if cur is not None:
+                bodies[h] = cur
+            continue
+        if cur is not None:
+            cur.append(ln)
+    return {h: (hashlib.sha256("\n".join(bodies[h]).rstrip().encode("utf-8")).hexdigest()[:12]
+                if h in bodies else "absent") for h in HEADINGS}
+
+
+def utc(ms):
+    return datetime.datetime.fromtimestamp(ms / 1000, datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
+
+
+def read_agent(sid, P):
+    """Return (body, warning). body None = no usable agent file (missing, unreadable, < 300 bytes).
+    warning None = fresh. Never raises."""
     try:
         ap = os.path.join(HANDOFFS_DIR, f"{sid}-agent.md")
         st = os.stat(ap)
+        if st.st_size < MIN_AGENT_BYTES:
+            return None, None
+        with open(ap, encoding="utf-8", errors="replace") as f:
+            raw = f.read()
+        body = raw.strip()
         meta = None
         try:
             with open(os.path.join(HANDOFFS_DIR, f"{sid}-agent.meta.json"), encoding="utf-8") as f:
                 meta = json.load(f)
         except Exception:
             meta = None
-        if not is_fresh(meta, st.st_size, st.st_mtime * 1000, time.time() * 1000):
-            return None
-        with open(ap, encoding="utf-8", errors="replace") as f:
-            return f.read().strip()
+        if not isinstance(meta, dict):
+            meta = None
+        mtime_ms = st.st_mtime * 1000
+        reasons = []
+        # (a) stale sections: meta says so, or the hook re-derives it
+        stale = False
+        if meta is not None:
+            ss = meta.get("stale_sections")
+            if isinstance(ss, list) and any(isinstance(x, str) for x in ss):
+                stale = True
+            secs, nudge_at = meta.get("sections"), _num(meta.get("lastNudgeAt"))
+            if not stale and isinstance(secs, dict) and nudge_at is not None:
+                cur = section_hashes(raw)
+                if all(isinstance(secs.get(h), str) and cur[h] == secs[h] for h in STALE_NAMES):
+                    users = sum(1 for x in P["user_events"] if x > nudge_at)
+                    tools = sum(1 for x in P["tool_events"] if x > nudge_at)
+                    stale = users >= STALE_USER_TURNS or tools >= STALE_TOOL_CALLS
+        if stale:
+            na = _num(meta.get("lastNudgeAt")) if meta else None
+            reasons.append(f"{', '.join(STALE_NAMES)} unchanged since {utc(na if na is not None else mtime_ms)}")
+        lu = P["last_user"]
+        if lu is not None and mtime_ms < lu - FRESH_GRACE_MS:
+            reasons.append(f"file written {utc(mtime_ms)} is older than the last user message by more than 10 min")
+        if not is_fresh(meta, st.st_size, mtime_ms, time.time() * 1000):
+            reasons.append("not updated since the last nudge")
+        return body, ("; ".join(reasons) if reasons else None)
     except Exception:
-        return None
+        return None, None
 
 
 def excerpt(path, cap=30000, n_msgs=40):
@@ -235,17 +397,65 @@ def haiku_handoff(tp):
         return None, type(e).__name__
 
 
-def lead_section(d, sid):
-    """Agent handoff (C), else Haiku fallback (B), else failure note. Returns '' when nothing to add."""
-    agent = read_agent(sid)
-    if agent:
-        return "## Agent handoff (written by the working agent)\n" + trunc(agent, AGENT_CAP) + "\n\n"
-    if os.environ.get("HANDOFF_HAIKU_FALLBACK") == "0":
-        return ""
+AGENT_HEAD = "## Agent handoff (written by the working agent)\n"
+HAIKU_HEAD = "## Model-written handoff (Haiku fallback; verify against facts)\n"
+
+
+def lead_parts(d, sid, P):
+    """(pre, haiku_text, haiku_line). pre = warning + agent section (never trimmed); haiku_text is the
+    model text (shortened by build under cap pressure); haiku_line is the short failure line."""
+    body, warn = read_agent(sid, P)
+    haiku_ok = os.environ.get("HANDOFF_HAIKU_FALLBACK") != "0"
+    if body and warn is None:
+        return AGENT_HEAD + trunc(body, AGENT_CAP) + "\n\n", None, ""
+    pre = ((f"Agent handoff may be stale: {warn}\n" if body else "")
+           + (AGENT_HEAD + trunc(body, AGENT_CAP) + "\n\n" if body else ""))
+    if not haiku_ok:
+        return pre, None, ""
     text, err = haiku_handoff(d.get("transcript_path", ""))
     if text:
-        return "## Model-written handoff (Haiku fallback; verify against facts)\n" + text + "\n\n"
-    return f"Haiku fallback failed: {err}\n\n"
+        return pre, text, ""
+    return pre, None, f"Haiku fallback failed: {err}\n\n"
+
+
+def facts_sections(P, cwd):
+    """name -> text in the F35.D display order (only non-empty ones)."""
+    out = {}
+    users, tasks = P["users"], P["tasks"]
+    if users:
+        out["users"] = ("## Last user messages (oldest first)\n" +
+                        "\n".join("- " + trunc(u, 600).replace("\n", " ") for u in users[-8:]) + "\n")
+    if P["qa"]:
+        out["qa"] = "## Decisions via questions\n" + "\n".join(P["qa"][-10:]) + "\n"
+    if P["files"]:
+        out["files"] = "## Files touched (last 30)\n" + "\n".join(f"- {f}" for f in P["files"][-30:]) + "\n"
+    if tasks:
+        out["tasks"] = "## Task state\n" + "\n".join(
+            f"- [{v['status']}] {trunc(v['subject'], 150)}" for v in tasks.values()) + "\n"
+    op = [f"- [{v['status']}] {one_line(v['subject'], 150)}" for v in tasks.values() if v["status"] != "completed"]
+    if isinstance(P["todos"], list):
+        for x in P["todos"]:
+            st = x.get("status")
+            if isinstance(st, str) and st != "completed":
+                op.append(f"- [{st}] {one_line(x.get('content'), 150)}")
+    if op:
+        out["open"] = "## Open tasks\n" + "\n".join(op[:20] + ([f"- ... +{len(op) - 20} more"] if len(op) > 20 else [])) + "\n"
+    bg = [f"- {one_line(r['desc'], 100)} (model: {r['model'] if isinstance(r['model'], str) and r['model'] else 'default'})"
+          for r in P["bg"] if not r["done"]][:10]
+    if bg:
+        out["bg"] = "## Background agents\n" + "\n".join(bg) + "\n"
+    g = git(cwd)
+    if g:
+        out["git"] = f"## Git\n- branch: {g[0]}\n```\n{trunc(g[1], 1500)}\n```\n"
+    if P["cmds"]:
+        out["cmds"] = "## Last Bash commands\n" + "\n".join(
+            "- `" + trunc(c, 200).replace("\n", " ") + "`" for c in P["cmds"][-5:]) + "\n"
+    if P["asst"]:
+        out["asst"] = "## Last assistant message\n" + trunc(P["asst"], 1500) + "\n"
+    return out
+
+
+DROP_ORDER = ["users", "files", "tasks", "git", "cmds", "asst", "bg", "open", "qa"]
 
 
 def build(d):
@@ -256,33 +466,44 @@ def build(d):
     header = (f"# Handoff (pre-compaction)\n- session: {sid}\n- cwd: {cwd}\n- trigger: {d.get('trigger')}\n"
               f"- time: {now}\n- transcript: {tp}\n")
     footer = f"\nFull transcript: {tp}. Read it for exact details before guessing.\n"
-    users, asst, files, tasks, cmds = parse(tp)
+    P = parse(tp)
     try:
-        lead = lead_section(d, str(sid).replace("/", "_"))
+        pre, htext, hline = lead_parts(d, str(sid).replace("/", "_"), P)
     except Exception:
-        lead = ""
-    if lead:
-        lead += "## Facts (auto-extracted)\n"
-    secs = []  # oldest-trimmed-first: popped from the front when over cap
-    if users:
-        secs.append("## Last user messages (oldest first)\n" +
-                    "\n".join("- " + trunc(u, 600).replace("\n", " ") for u in users[-8:]) + "\n")
-    if files:
-        secs.append("## Files touched (last 30)\n" + "\n".join(f"- {f}" for f in files[-30:]) + "\n")
-    if tasks:
-        secs.append("## Task state\n" + "\n".join(
-            f"- [{v['status']}] {trunc(v['subject'], 150)}" for v in tasks.values()) + "\n")
-    g = git(cwd)
-    if g:
-        secs.append(f"## Git\n- branch: {g[0]}\n```\n{trunc(g[1], 1500)}\n```\n")
-    if cmds:
-        secs.append("## Last Bash commands\n" + "\n".join(
-            "- `" + trunc(c, 200).replace("\n", " ") + "`" for c in cmds[-5:]) + "\n")
-    if asst:
-        secs.append("## Last assistant message\n" + trunc(asst, 1500) + "\n")
-    while secs and len(header) + len(lead) + len(footer) + sum(len(s) + 1 for s in secs) > CAP:
-        secs.pop(0)
-    return header + "\n" + lead + "\n".join(secs) + footer
+        pre, htext, hline = "", None, ""
+    try:
+        secs = facts_sections(P, cwd)
+    except Exception:
+        secs = {}
+
+    def total(hblock):
+        lead = pre + hblock + hline
+        if lead:
+            lead += "## Facts (auto-extracted)\n"
+        return len(header) + len(lead) + len(footer) + sum(len(v) + 1 for v in secs.values()), lead
+
+    hblock = ""
+    if htext:
+        full = HAIKU_HEAD + htext + "\n\n"
+        if not pre:  # Haiku alone is the lead (no agent file): old behaviour, facts are trimmed instead
+            hblock = full
+        else:
+            over = total(full)[0] - CAP
+            if over <= 0:
+                hblock = full
+            else:
+                room = len(htext) - over
+                if room >= 200:
+                    hblock = HAIKU_HEAD + trunc(htext, room) + "\n\n"
+    n, lead = total(hblock)
+    for k in DROP_ORDER:
+        if n <= CAP:
+            break
+        if k in secs:
+            del secs[k]
+            n, lead = total(hblock)
+    order = ["users", "qa", "files", "tasks", "open", "bg", "git", "cmds", "asst"]
+    return header + "\n" + lead + "\n".join(secs[k] for k in order if k in secs) + footer
 
 
 def main():

@@ -22,7 +22,7 @@ import { ORCH_ID, ORCH_TEXT, coldTurnFigure, statusText as orchStatus } from './
 import { cardText, coachSegment, statusText as coachStatus } from './mods/coach'
 import { buildPrompt, compactInstructions, kebab, missingHeadings, parseArgs } from './mods/handoff'
 import { resumeEntry } from './mods/resume'
-import { agentResumeEntry, handoffsDir, buildMeta, highestK, isFresh, metaPathFor, agentPathFor, nudgeLine, nudgeText, parseEnvWindow, threshold } from './mods/nudge'
+import { agentResumeEntry, handoffsDir, buildMeta, highestK, isFresh, isStaleSections, metaPathFor, agentPathFor, nudgeLine, nudgeText, parseEnvWindow, sectionHashes, STALE_TARGETS, threshold } from './mods/nudge'
 import type { AgentFresh } from './mods/nudge'
 import { windowFor } from './_shared/windows'
 import { ORCH_KEY, TOAST_KEY, isLast, lastKey, pendingKey } from './store'
@@ -676,7 +676,7 @@ async function agentPending($: EngineInterface, ctx: Ctx, now: number): Promise<
   }
   if (size == null) return undefined
   const known = n.agentWrittenAt != null || n.lastNudgeAt != null
-  if (!isFresh(known ? buildMeta(n, ctx.rt.ctx) : undefined, size, now, mtime)) return undefined
+  if (!isFresh(known ? buildMeta(n, ctx.rt.ctx) : undefined, size, now, mtime, n.lastUserMsgAt)) return undefined
   return { v: 1, path: n.agentPath, at: now, savedAt: n.agentWrittenAt ?? mtime ?? now, kind: 'agent' }
 }
 
@@ -731,6 +731,9 @@ async function nudgeIdentity($: EngineInterface, ctx: Ctx): Promise<boolean> {
     n.armText = n.armedK = n.armTokens = undefined
     n.agentWrittenAt = n.agentWrittenAtTokens = n.agentSize = n.lastNudgeAt = n.lastNudgeTokens = n.metaTokens = undefined
     n.nudgeCount = 0
+    n.sections = n.baseSections = n.prevSections = n.staleSections = n.lastUserMsgAt = undefined
+    n.armStale = false
+    n.userTurns = n.toolCalls = 0
   }
   n.sid = sid
   n.agentPath = agentPathFor(n.home, sid)
@@ -818,6 +821,8 @@ async function nudgeDelivered($: EngineInterface, ctx: Ctx, tokens: number): Pro
   n.lastNudgeAt = await $.clock.now()
   n.lastNudgeTokens = tokens
   n.nudgeCount++
+  n.baseSections = n.sections
+  n.userTurns = n.toolCalls = 0
   await writeMeta($, ctx, tokens)
   await nudgePublish($, ctx)
 }
@@ -844,7 +849,21 @@ async function nudgeOnMeasure($: EngineInterface, e: { agentId?: string; context
         } catch {
           exists = false
         }
-        n.armText = nudgeText(t, w, n.agentPath, exists)
+        // F35.2: hashes at arm time, compared with the ones at the previous delivery (idempotent across re-arms).
+        let stale = false
+        if (exists) {
+          try {
+            const cur = await sectionHashes((await $.fs.read(n.agentPath)) ?? '')
+            n.prevSections = n.baseSections
+            n.sections = cur
+            stale = isStaleSections(cur, n.baseSections, n.userTurns, n.toolCalls)
+            n.staleSections = stale ? [...STALE_TARGETS] : []
+          } catch {
+            // unreadable: no staleness verdict
+          }
+        }
+        n.armStale = stale
+        n.armText = nudgeText(t, w, n.agentPath, exists, stale)
         n.armedK = k
         n.armTokens = t
       }
@@ -858,6 +877,7 @@ async function nudgeOnMeasure($: EngineInterface, e: { agentId?: string; context
       if (typeof st.mtimeMs === 'number' && st.mtimeMs > (n.agentWrittenAt ?? -Infinity)) {
         n.agentWrittenAt = st.mtimeMs
         n.agentWrittenAtTokens = t
+        await clearStaleIfRewritten($, ctx)
         dirty = true
       }
     } catch {
@@ -873,6 +893,7 @@ async function nudgeOnMeasure($: EngineInterface, e: { agentId?: string; context
 function nudgeToolCall<R extends { context?: readonly string[] }>($: EngineInterface, e: unknown, r: R, ctx: Ctx): R {
   const n = ctx.rt.nudge
   const ev = e as { tool?: string; file_path?: unknown; content?: unknown }
+  n.toolCalls++
   if (n.agentPath && ev.file_path === n.agentPath && (ev.tool === 'Write' || ev.tool === 'Edit' || ev.tool === 'MultiEdit') && (r as { isError?: boolean }).isError !== true) {
     if (typeof ev.content === 'string') n.agentSize = ev.content.length
     $.clock.after(0, () => void safe(() => nudgeWritten($, ctx)))
@@ -896,13 +917,30 @@ async function nudgeWritten($: EngineInterface, ctx: Ctx): Promise<void> {
       // keep the size from the Write input
     }
   }
+  await clearStaleIfRewritten($, ctx)
   await writeMeta($, ctx, ctx.rt.ctx)
   await nudgePublish($, ctx)
 }
 
+/** F35.2: a detected write that changed BOTH target sections' hashes (against the latest arm) clears `stale_sections` at once. */
+async function clearStaleIfRewritten($: EngineInterface, ctx: Ctx): Promise<void> {
+  const n = ctx.rt.nudge
+  if (!n.agentPath || !n.sections || !n.staleSections || n.staleSections.length === 0) return
+  try {
+    const cur = await sectionHashes((await $.fs.read(n.agentPath)) ?? '')
+    if (STALE_TARGETS.every(h => cur[h] !== n.sections?.[h])) n.staleSections = []
+  } catch {
+    // keep the verdict
+  }
+}
+
 /** `prompt.submit`: the secondary channel; returns the entry when an arm is pending. */
-async function nudgeOnPrompt($: EngineInterface, ctx: Ctx): Promise<string | undefined> {
+async function nudgeOnPrompt($: EngineInterface, ctx: Ctx, text?: string): Promise<string | undefined> {
   if (!ctx.opts.mods.nudge) return undefined
+  if (typeof text === 'string' && text.trim() !== '') {
+    ctx.rt.nudge.userTurns++
+    ctx.rt.nudge.lastUserMsgAt = await $.clock.now()
+  }
   const taken = takeArm(ctx)
   if (!taken) return undefined
   await safe(() => nudgeDelivered($, ctx, taken.tokens))
@@ -1111,7 +1149,7 @@ export const register: Register = (on, options) => {
     })
     let nudge: string | undefined
     await safe(async () => {
-      nudge = await nudgeOnPrompt($, ctx)
+      nudge = await nudgeOnPrompt($, ctx, (e as { text?: string; agentId?: string }).agentId ? undefined : e.text)
     })
     const add = [entry, nudge].filter((x): x is string => x != null)
     return next(add.length === 0 ? e : { ...e, context: [...(e.context ?? []), ...add] })

@@ -6,6 +6,12 @@ export const MIN_BYTES = 300
 export const NEAR_TOKENS = 50_000
 export const NO_META_MS = 30 * 60_000
 export const META_STEP = 10_000
+/** F35.1 constants. */
+export const STALE_USER_TURNS = 3
+export const STALE_TOOL_CALLS = 40
+export const FRESH_GRACE_MS = 600_000
+/** The two headings whose staleness F35.2 watches (names without `## `), in fixed order. */
+export const STALE_TARGETS = ['In progress', 'Exact next step'] as const
 
 /** `~/.local/state/claude-handoffs/<sid>-agent.md` meta file written by the plugin (F33.4). Times are epoch ms. */
 export type NudgeMeta = {
@@ -18,15 +24,68 @@ export type NudgeMeta = {
   nudgeCount: number
   agentWrittenAt?: number
   agentWrittenAtTokens?: number
+  /** F35.1, all optional (older readers ignore them). */
+  sections?: Record<string, string>
+  prevSections?: Record<string, string>
+  userTurns?: number
+  toolCalls?: number
+  lastUserMsgAt?: number
+  stale_sections?: string[]
+}
+
+/** F35.1: heading text (without `## `) -> first 12 hex chars of SHA-256 over the section body; missing heading = `absent`. */
+export async function sectionHashes(text: string): Promise<Record<string, string>> {
+  const lines = text.replace(/\r\n/g, '\n').split('\n')
+  const bodies = new Map<string, string[]>()
+  let cur: string[] | undefined
+  for (const line of lines) {
+    if (line.startsWith('## ')) {
+      cur = (HEADINGS as readonly string[]).includes(line) && !bodies.has(line) ? [] : undefined
+      if (cur) bodies.set(line, cur)
+      continue
+    }
+    cur?.push(line)
+  }
+  const out: Record<string, string> = {}
+  for (const h of HEADINGS) {
+    const b = bodies.get(h)
+    out[h.slice(3)] = b ? await sha12(b.join('\n').replace(/\s+$/, '')) : 'absent'
+  }
+  return out
+}
+
+async function sha12(s: string): Promise<string> {
+  const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s))
+  return [...new Uint8Array(d)].map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 12)
+}
+
+/** F35.2: stale when both target hashes equal the previous nudge's and enough turns or tool calls passed since. */
+export function isStaleSections(cur: Record<string, string>, prev: Record<string, string> | undefined, userTurns: number, toolCalls: number): boolean {
+  if (!prev) return false
+  for (const t of STALE_TARGETS) if (cur[t] === undefined || cur[t] !== prev[t]) return false
+  return userTurns >= STALE_USER_TURNS || toolCalls >= STALE_TOOL_CALLS
 }
 
 /**
  * Freshness of the agent-written handoff (F33.4), shared with the PreCompact hook.
  * With a meta: size >= 300 bytes AND an `agentWrittenAt` AND (written at or after the last nudge OR within
- * 50,000 tokens of it). Without a meta: fresh iff `mtimeMs` is within 30 minutes of `now` (size still >= 300).
+ * 50,000 tokens of it), then F35.4: no `stale_sections`, and written no more than 10 min before the last user message
+ * (`lastUserMsgAt`, absent = skipped). Without a meta: fresh iff `mtimeMs` is within 30 minutes of `now` (size still >= 300).
  */
-export function isFresh(meta: NudgeMeta | undefined, size: number, now: number, mtimeMs?: number): boolean {
+export function isFresh(meta: NudgeMeta | undefined, size: number, now: number, mtimeMs?: number, lastUserMsgAt?: number): boolean {
   if (!(size >= MIN_BYTES)) return false
+  if (!f33Fresh(meta, now, mtimeMs)) return false
+  // F35.4: stale sections and the last-user-message grace.
+  if (Array.isArray(meta?.stale_sections) && meta.stale_sections.length > 0) return false
+  const lu = lastUserMsgAt ?? meta?.lastUserMsgAt
+  if (typeof lu === 'number') {
+    const written = Math.max(mtimeMs ?? -Infinity, meta?.agentWrittenAt ?? -Infinity)
+    if (written === -Infinity || written < lu - FRESH_GRACE_MS) return false
+  }
+  return true
+}
+
+function f33Fresh(meta: NudgeMeta | undefined, now: number, mtimeMs?: number): boolean {
   if (!meta) return typeof mtimeMs === 'number' && now - mtimeMs <= NO_META_MS
   if (typeof meta.agentWrittenAt !== 'number') return false
   if (typeof meta.lastNudgeAt !== 'number' || meta.agentWrittenAt >= meta.lastNudgeAt) return true
@@ -60,10 +119,11 @@ export const handoffsDir = (home: string): string => `${home.replace(/\/+$/, '')
 export const agentPathFor = (home: string, sid: string): string => `${handoffsDir(home)}/${sid}-agent.md`
 export const metaPathFor = (home: string, sid: string): string => `${handoffsDir(home)}/${sid}-agent.meta.json`
 
-/** F33.3 text, built at arm time. `verb` is `update` when the file exists, else `write`. */
-export function nudgeText(t: number, w: number, path: string, exists: boolean): string {
+/** F35.3 text (supersedes F33.3), built at arm time. `verb` is `update` when the file exists, else `write`. */
+export const STALE_SENTENCE = 'Your last handoff is STALE: "In progress" and "Exact next step" are unchanged since the previous nudge; rewrite them from scratch, do not append.'
+export function nudgeText(t: number, w: number, path: string, exists: boolean, stale = false): string {
   const pct = Math.floor((t * 100) / w)
-  return `[compact] Context is ${pct}% of the auto-compact window (${kfmt(t)} of ${kfmt(w)}). Compaction will drop your working memory. Now, in one Write call, ${exists ? 'update' : 'write'} ${path} (create the folder if missing) with exactly these headings: ${HEADINGS.join(', ')}. Use real paths, commands and ids; no secrets. Then continue the task.`
+  return `[compact] Context is ${pct}% of the auto-compact window (${kfmt(t)} of ${kfmt(w)}). Compaction will drop your working memory.${stale ? ` ${STALE_SENTENCE}` : ''} Now, in one Write call, ${exists ? 'update' : 'write'} ${path} (create the folder if missing) with exactly these headings: ${HEADINGS.join(', ')}. REWRITE "In progress" and "Exact next step" in place for the current state; never append "DONE since" notes. Move finished items to "Done". Keep the whole file under 5000 chars. Use real paths, commands and ids; no secrets. Then continue the task.`
 }
 
 /** F33.11 Resume entry for the agent file (<= 240 chars with a normal path). */
@@ -91,6 +151,15 @@ export type NudgeRt = {
   agentWrittenAt?: number
   agentWrittenAtTokens?: number
   agentSize?: number
+  /** F35.1/F35.2: sections = hashes as of the latest arm, base = as of the latest delivery, prev = what `sections` replaced. */
+  sections?: Record<string, string>
+  baseSections?: Record<string, string>
+  prevSections?: Record<string, string>
+  armStale?: boolean
+  staleSections?: string[]
+  userTurns: number
+  toolCalls: number
+  lastUserMsgAt?: number
   /** ctx at the last meta write. */
   metaTokens?: number
   metaFailedLogged: boolean
@@ -98,7 +167,7 @@ export type NudgeRt = {
   pub?: string
 }
 
-export const makeNudgeRt = (): NudgeRt => ({ lastK: -1, nudgeCount: 0, metaFailedLogged: false })
+export const makeNudgeRt = (): NudgeRt => ({ lastK: -1, nudgeCount: 0, metaFailedLogged: false, userTurns: 0, toolCalls: 0 })
 
 /** Meta for isFresh / the file, from the runtime. */
 export function buildMeta(n: NudgeRt, ctx: number | undefined): NudgeMeta {
@@ -107,6 +176,12 @@ export function buildMeta(n: NudgeRt, ctx: number | undefined): NudgeMeta {
   if (n.lastNudgeTokens != null) m.lastNudgeTokens = n.lastNudgeTokens
   if (n.agentWrittenAt != null) m.agentWrittenAt = n.agentWrittenAt
   if (n.agentWrittenAtTokens != null) m.agentWrittenAtTokens = n.agentWrittenAtTokens
+  if (n.sections) m.sections = n.sections
+  if (n.prevSections) m.prevSections = n.prevSections
+  m.userTurns = n.userTurns
+  m.toolCalls = n.toolCalls
+  if (n.lastUserMsgAt != null) m.lastUserMsgAt = n.lastUserMsgAt
+  if (n.staleSections) m.stale_sections = n.staleSections
   return m
 }
 

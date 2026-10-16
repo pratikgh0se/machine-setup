@@ -442,3 +442,58 @@ Schedule
 ## 11. Open questions
 1. R2 wording: for a user copy duplicated by a plugin copy, this spec removes the user copy (the only removable one); plugin-vs-user priority is otherwise unspecified. Confirm.
 2. `ccusage weekly` week boundary may differ from the ISO `week` id; the ledger stores its value as-is. Confirm acceptable.
+
+## Handoff health (2026-10-16)
+Draft for approval. Why: compaction plus handoff is what long jobs depend on; the weekly report is the one place the user already reads, so a degraded handoff rate or a failing nightly canary must show up there (specs/handoff-hooks-spec.md "F36 Handoff reliability" defines the log and the canary). Amends 4.1.3 (ledger line), 4.2 (inputs, rule table), 4.3 (report structure) and 9 (ACs 57+).
+
+### H.1 Input and ledger
+`analyze.py` gains an optional input `--handoff-health <path>` (default `$HOME/.local/state/claude-handoffs/health.jsonl`; test override env `HANDOFF_HEALTH_FILE`). The file is JSONL (hook spec F36.B): compaction lines (have `agent_file`) and canary lines (`trigger: "canary"`). Lines that fail to parse, lack `ts`, or have `canary_child` true are ignored (counted in `ignored`). Window = the same 7 days as `spend_breakdown` (`ts` >= now - 7 days, UTC). Missing or unreadable file: `handoff_health` is `null`, `warnings` gains `"handoff-health"`, exit stays 0. The ledger line gains an optional key `handoff_health` (absent in old lines; readers tolerate absence; `schema` stays 1):
+```json
+"handoff_health": {"window_days": 7, "compactions": 12, "auto": 10, "manual": 2, "degraded": 3, "degraded_rate": 0.25,
+  "agent_file": {"fresh": 8, "stale": 1, "absent": 3},
+  "fallback": {"skipped": 8, "ok": 2, "failed": 1, "timeout": 0, "disabled": 1},
+  "errors_total": 0, "truncated": 2,
+  "top_reasons": [{"reason": "agent_absent", "count": 3}],
+  "canary": {"pass": 6, "fail": 1, "skip": 0, "nights": [{"date": "2026-10-13", "result": "pass"}], "last_ts": "2026-10-19T03:41:02Z"},
+  "ignored": 0}
+```
+- `compactions` = compaction lines in the window; `auto`/`manual` count `trigger` (other values only in the total). `degraded` per line = `agent_file != "fresh"` OR `fallback in {"failed","timeout"}` OR `errors` non-empty (the hook's definition, recomputed from fields, not read from any `degraded` key). `degraded_rate` = degraded / compactions rounded to 4 places; `null` when `compactions` is 0.
+- `top_reasons`: reason codes per degraded line (`agent_absent`, `agent_stale`, `fallback_failed`, `fallback_timeout`, `section_error:<name>` per name in `errors`; a line contributes one count per code it has), at most 3, sorted by count desc then code; codes are the only strings (no text, no ids).
+- `canary`: counts of canary lines in the window by `result`; `nights` = at most the last 7 calendar days (local date of `ts`, newest last) one entry per date: the LAST canary line of that date wins; dates without a line are omitted; `last_ts` = the newest canary `ts` in the whole file (not only the window), `null` if none ever.
+- No message text, paths, cwd, session ids or exception messages in `handoff_health` (only counts, dates, codes).
+
+### H.2 Report subsection (amends 4.3)
+`### Handoff health` is added INSIDE `## Regressions`, as the last content of that section (the section's own list or the literal `None` for overhead regressions comes first and is not affected). The "only H3" rule in 4.3 is amended: the allowed H3s are exactly `### Risky sessions` (inside `## Spend breakdown`, after its other content) and `### Handoff health` (inside `## Regressions`, after its other content); each appears at most once, only in that section. Content, in this order:
+1. A one-line summary: `compactions <N> (auto <a>, manual <m>), degraded <d> (<P>%), window 7 days (as of YYYY-MM-DD)`; `<P>` = `degraded_rate` x 100 rounded to 1 decimal; `degraded n/a` when 0 compactions.
+2. `fallback: ok <n>, failed <n>, timeout <n>, skipped <n>, disabled <n>` and `agent file: fresh <n>, stale <n>, absent <n>` (one line each).
+3. `canary: <pass> pass / <fail> fail / <skip> skip in the last 7 nights` followed by a one-line strip of the nights, oldest first, as `YYYY-MM-DD pass|fail|skip` joined by ` · `; `canary: no runs recorded` when `last_ts` is null; if the newest canary `ts` is more than 3 days before `now`, append `(last run <date>, stale)`.
+4. `top reasons: <code> x<n>, ...` or `top reasons: none`.
+When `handoff_health` is `null` (no/unreadable file) the subsection is still present with the single line `n/a`. When there are 0 compactions and 0 canary lines it says `no data in window`. If R12 fired, the line `FLAG handoff-degraded: <trigger names>` follows the other lines. The subsection MUST NOT contain message text. The recency marker `(as of YYYY-MM-DD)` appears once, in the summary line. The headline (4.3) and the notification are unchanged.
+Required ordering stays: Headline, Breakdown, Spend breakdown, Regressions (with the new H3), Proposals, Applied since last report, Measurement notes.
+
+### H.3 Rule R12 (amends the rule table of 4.2)
+| Rule | Id | Trigger | Action | Est. saving |
+|---|---|---|---|---|
+| R12 | `handoff-degraded` | Current ledger `handoff_health` is non-null AND ANY of: (a) `compactions` > 0 and `degraded * 10 > compactions` (degraded rate strictly > 10%, integer arithmetic); (b) `canary.fail` >= 1 in the window; (c) a canary has ever run (`canary.last_ts` non-null) but the newest canary `ts` is more than 3 days before `now` (the nightly job silently stopped). One proposal per run, not per trigger | `flag`: "handoff reliability degraded; check handoff health and the canary" | 0; evidence: `compactions`, `degraded`, `degraded_rate`, `canary_fail`, `canary_last_ts`, `top_reasons`, `triggers` (array of `rate`, `canary_fail`, `canary_stale`, in that order) |
+- Trigger (c) is an addition beyond the two conditions requested, so that a dead canary cannot fail silently; drop it if unwanted.
+- `flag` proposals follow the 4.2 schema, `apply.sh` exit 6, ids stable; R12 is not suppressed by `insufficient_history` (it reads the health log, not transcripts).
+- No minimum-sample guard (1 degraded of 1 compaction = 100% flags); the evidence carries the counts (open question 1).
+- Exactly 10.0% degraded does not fire (strict). 0 compactions with no canary failure does not fire. `handoff_health` null: no R12.
+- Canary `skip` alone never fires R12 (it is reported in the strip).
+
+### H.4 Acceptance criteria (continuing 9; fixtures under `fixtures/handoff-health/`, `--now` fixed)
+57. Parsing: a fixture `health.jsonl` with 12 in-window compaction lines (mix of fresh/stale/absent, ok/failed/disabled, auto/manual), 2 older than 7 days, 1 malformed line, 1 line with `canary_child:true`, and 7 canary lines yields `handoff_health` with `compactions` 12, counts exactly matching a hand-computed table, `ignored` 2, `degraded` per the recomputed definition (a line with `errors:["git"]` and everything else healthy is degraded; `agent_file:"absent"` + `fallback:"ok"` is degraded).
+58. `degraded_rate` = degraded/compactions to 4 places; `null` when no compactions in window; `top_reasons` has at most 3 entries, ordered by count desc then code asc, uses `section_error:<name>` per name, and contains no other strings.
+59. Canary strip: for a night with two canary lines the later one wins; nights without a line are omitted; at most 7 nights, oldest first; `last_ts` is the newest canary line overall even if outside the window; `pass/fail/skip` counts cover in-window lines.
+60. Missing health file: ledger line has `handoff_health: null`, `warnings` contains `"handoff-health"`, exit 0, report subsection is exactly `### Handoff health` followed by `n/a`, no R12. Unreadable (a directory in place of the file) behaves the same. A ledger written before this feature (no key) is readable by analyze/report without error and shows `n/a`.
+61. Report structure: with data, `## Regressions` contains the overhead list (or `None`) first, then `### Handoff health` with the lines of H.2 in order (summary, fallback, agent file, canary, top reasons); the order of all other H2 sections is unchanged; the only H3s in the whole report are `### Risky sessions` and `### Handoff health`; the summary line matches `^compactions \d+ \(auto \d+, manual \d+\), degraded \d+ \(\d+(\.\d)?%\), window 7 days \(as of \d{4}-\d\d-\d\d\)$` (or `degraded n/a` form); any earlier AC that asserted "no H3 other than Risky sessions" (AC 26) is updated accordingly.
+62. No-text rule (AC 55 extended): a unique marker placed in every string field of the health fixture (including unknown extra keys, `sid`, `reason`) appears nowhere in the ledger, proposals, report or logs; the subsection contains only digits, dates, the fixed words and reason codes.
+63. R12 (a): 10 compactions with 1 degraded (10.0%) -> no R12; 10 with 2 degraded -> R12 with `triggers:["rate"]`; 1 compaction 1 degraded -> R12; 0 compactions -> none from (a). Integer arithmetic: 20 compactions 2 degraded -> none; 21 with 3 -> R12.
+64. R12 (b): any in-window canary line with `result:"fail"` -> R12 with `canary_fail` in `triggers`, even with 0 compactions; a canary fail dated 8 days ago -> none from (b); only `skip` lines -> none.
+65. R12 (c): newest canary `ts` exactly 3 days before `now` -> none; 3 days plus one second -> `canary_stale`; no canary line ever -> none; several triggers together are listed in the order `rate`, `canary_fail`, `canary_stale`.
+66. R12 proposal shape: id `handoff-degraded`, action `flag`, saving 0, evidence keys as in the table; `apply.sh handoff-degraded` exits 6 with no change; one proposal even when all three triggers fire; it appears in `## Proposals` in the 4.2 sort order and counts in the headline's `N proposals`; the report subsection shows the `FLAG handoff-degraded:` line with the same trigger names; no R12 when `handoff_health` is null.
+67. Determinism and idempotence: same fixtures and `--now` give byte-identical output across two runs (AC 12 extended); a re-run in the same ISO week keeps one ledger line (AC 41) and replaces the subsection inside the markers without duplicating it (AC 28); vault unset -> exit 0, no file (AC 29).
+68. `analyze.py` still imports no network/LLM modules and makes no subprocess calls (AC 25) with the new reader; the health reader performs only reads.
+
+### H.5 Open questions
+(1) A minimum-sample guard for R12 (a) (for example >= 5 compactions) is a candidate once the first weeks of data exist. (2) Whether `skip` nights (claude missing or logged out) should themselves raise a flag after N consecutive nights. (3) Retention: `health.jsonl` rotates at 5000 lines (hook spec F36.B); the ledger keeps the weekly `handoff_health` summary forever (Decision 6).
