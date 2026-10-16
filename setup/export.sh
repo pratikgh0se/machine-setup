@@ -89,7 +89,7 @@ say "plugins.json"
 # split the staged items: file already in the public tree -> public refresh; otherwise -> overlay
 while IFS= read -r -d '' f; do
   rel="${f#$STAGE/claude/}"
-  if [ -f "$REPO/claude/$rel" ]; then
+  if [ -f "$REPO/claude/$rel" ] && [ ! -f "$OVERLAY/claude/$rel" ]; then  # overlay-owned files never go to the public repo
     cmp -s "$f" "$REPO/claude/$rel" || { mkdir -p "$PUBNEW/claude/$(dirname "$rel")"; cp "$f" "$PUBNEW/claude/$rel"; }
   else
     mkdir -p "$NEW/claude/$(dirname "$rel")"; cp -p "$f" "$NEW/claude/$rel"
