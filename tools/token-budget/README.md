@@ -95,3 +95,7 @@ Backups of your settings file live in the state directory, so `--purge` also del
 - **No report file.** `OBSIDIAN_VAULT_PATH` is unset or the directory is missing; the step is skipped silently. See `ledger.jsonl` and `proposals/`.
 - **`ccusage n/a`.** Install `ccusage` or ignore it; the estimate does not depend on it.
 - **Proposal commands cannot find `apply.sh`.** Run them from the repo root or use the full path.
+
+## Handoff health
+
+The probe writes `handoff_health` into each ledger line (counts, dates and reason codes from `~/.local/state/claude-handoffs/health.jsonl`, 7-day window; `null` plus warning `handoff-health` when the file is missing). `analyze.py --handoff-health <path>` (or env `HANDOFF_HEALTH_FILE`) recomputes it from a file. The report adds `### Handoff health` inside `## Regressions`: compaction counts by status (ok, reduced, degraded), fallback and agent-file counts, the last 7 nights of the handoff canary, and top reason codes. Rule R12 (`handoff-degraded`, flag only) fires when more than 10% of compactions were degraded, a canary night failed, or the canary has not run for 3 days. Reduced handoffs are counted but never fire it. See `tools/handoff-canary/README.md`.

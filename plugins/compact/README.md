@@ -1,6 +1,6 @@
 # compact
 
-Compact at the right moment and keep the thread across it. Version 1.0.7. Mods: a cost-aware Compact Coach, a two-step `/handoff`, a Resume loader, a Handoff nudge and an optional Orchestrator mode. Spends no tokens except the model-visible pieces listed under Context cost.
+Compact at the right moment and keep the thread across it. Version 1.2.0. Mods: a cost-aware Compact Coach, a two-step `/handoff`, a Resume loader, a Handoff nudge, a Handoff alert and an optional Orchestrator mode. Spends no tokens except the model-visible pieces listed under Context cost.
 
 ## Install
 
@@ -29,6 +29,8 @@ No timer, hook or toast ever compacts for you.
 **Resume loader** (`mod_resume_enabled`). After a compaction that follows a saved handoff, the first prompt carries one short line pointing at the file (`Context was compacted. Read <file> first ...`), once. A handoff older than `handoff_resumeMaxAgeMin` is not used.
 
 **Handoff nudge** (`mod_nudge_enabled`, default on). When context reaches `nudge_atPercent` (75) of the auto-compact window, and again every `nudge_everyTokens` (50,000) of growth, one short `[compact]` note is appended to the next tool result (or prompt) asking the working model to write its own handoff to `~/.local/state/claude-handoffs/<session>-agent.md`. No extra turn, nothing in the band, never blocks. The window is `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, else the session's measured window, else a model table (`windowsJson` overrides). If an automatic compaction then happens without a `/handoff`, the Resume loader points the next prompt at that agent file when it is fresh (see contract below).
+
+**Handoff alert** (`mod_handoffalert_enabled`, default on). When the handoff of a compaction is degraded (a section failed, a section is stale, or there is no fresh agent file and the Haiku fallback failed), the repo's hooks write `~/.local/state/claude-handoffs/<session>-degraded.json`. This mod reads it and shows one toast (`HANDOFF DEGRADED · <reasons>`) and a first band chip `HANDOFF DEGRADED · <first reason> +n` that stays until you run `/handoff` or the agent rewrites its handoff file; it then marks the file `clearedAt`. A reduced handoff (no agent file but the Haiku fallback worked) shows nothing. `/coach` gains `handoff health: ok|DEGRADED: ...`. Adds nothing to the model's context; the model-facing warning comes from the SessionStart hook.
 
 **Orchestrator mode** (`mod_orch_enabled`, `orch_enabled`). Adds a roughly 100 token section to the system prompt: you reason and review, Sonnet builds, Haiku gathers, always set `model` on Agent calls, one scoped brief per agent. On by default. Toggling changes the system prompt and costs one cold turn, so `/orch on|off` asks for `--yes`; prefer toggling right after a compaction or at session start. It cooperates with the `agents` Delegation Guard but works without it.
 
@@ -81,6 +83,7 @@ Always loaded: about 100 tokens for the Orchestrator section when on (0 when off
 | `mod_resume_enabled` | `true` | boolean | Remind the model to read the handoff after compaction |
 | `mod_orch_enabled` | `true` | boolean | Enable /orch and the orchestrator prompt section |
 | `mod_nudge_enabled` | `true` | boolean | Remind the working model to write its own handoff before compaction (one short note, no extra turn) |
+| `mod_handoffalert_enabled` | `true` | boolean | Toast and band chip when a compaction's handoff is degraded |
 | `coach_showFromTokens` | `100000` | number | Context size from which the chip shows |
 | `coach_targetTokens` | `40000` | number | Wanted size after compaction; the measured floor wins if higher |
 | `coach_summaryOutTokens` | `4000` | number | Expected size of the compaction summary |

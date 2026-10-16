@@ -14,6 +14,7 @@ from datetime import timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import tblib as T  # noqa: E402
+import tb_handoff  # noqa: E402
 
 WINDOW_DAYS = 30
 MIN_HISTORY_DAYS = 14
@@ -269,7 +270,7 @@ def build_regressions(cur_row, prev_row, cm, pm, delta, cdelta):
 
 
 # ---------- proposals ----------
-def build_proposals(cm, pm, settings, tr, history_ok, protect, applied, baseline, state, mcp_grew=False, spend_bd=None):
+def build_proposals(cm, pm, settings, tr, history_ok, protect, applied, baseline, state, mcp_grew=False, spend_bd=None, hh=None, now=None):
     props = {}
 
     def add(p):
@@ -435,6 +436,16 @@ def build_proposals(cm, pm, settings, tr, history_ok, protect, applied, baseline
                    % (wa.get("steps", 0), wa.get("max_context", 0), wa.get("est_usd", 0), usd), 0, "low",
                    {"type": "flag", "advice": "runaway subagent; cap steps and context"}))
 
+    # R12 (handoff_health; reads the health log, not transcripts, so insufficient_history does not suppress it)
+    trig = tb_handoff.r12(hh, now) if now is not None else []
+    if trig:
+        can = hh.get("canary") or {}
+        ev = {"compactions": hh.get("compactions"), "degraded": hh.get("degraded"), "degraded_rate": hh.get("degraded_rate"),
+              "canary_fail": can.get("fail"), "canary_last_ts": can.get("last_ts"),
+              "top_reasons": hh.get("top_reasons") or [], "triggers": trig}
+        add(mk("handoff-degraded", "R12", "Handoff reliability degraded; check handoff health and the canary", ev, 0, "low",
+               {"type": "flag", "advice": "handoff reliability degraded; check handoff health and the canary"}))
+
     out = []
     for p in props.values():
         if p["id"] in applied:
@@ -481,9 +492,15 @@ def run(args):
         regs = build_regressions(cur, prev, cm, pm, delta, cdelta)
 
     mcp_grew = (not baseline) and cdelta.get("mcp_tools", 0) > 0
+    hh_warn = None
+    hpath = tb_handoff.explicit_path(getattr(args, "handoff_health", None))
+    if hpath:
+        hh, hh_warn = tb_handoff.compute(hpath, now)
+    else:
+        hh = cur.get("handoff_health") if isinstance(cur.get("handoff_health"), dict) else None
     props = build_proposals(cm, pm, settings, tr, not insufficient, protect_sets(state),
                             applied_state(state), baseline, state, mcp_grew,
-                            cur.get("spend_breakdown"))
+                            cur.get("spend_breakdown"), hh, now)
     res = {
         "schema": 1,
         "week": week,
@@ -496,6 +513,8 @@ def run(args):
         "spend": cur.get("spend") or {"daily_usd": None, "weekly_usd": None},
         "regressions": regs,
         "proposals": props,
+        "handoff_health": hh,
+        "warnings": [hh_warn] if hh_warn else [],
         "stats": {"transcripts_scanned": tr["scanned"], "window_days": WINDOW_DAYS,
                   "malformed_lines": tr["malformed"], "insufficient_history": insufficient},
     }
@@ -508,6 +527,7 @@ def main():
     ap.add_argument("--now")
     ap.add_argument("--claude-home")
     ap.add_argument("--settings")
+    ap.add_argument("--handoff-health")
     ap.add_argument("--out-json")
     args = ap.parse_args()
     try:

@@ -22,12 +22,13 @@ import { ORCH_ID, ORCH_TEXT, coldTurnFigure, statusText as orchStatus } from './
 import { cardText, coachSegment, statusText as coachStatus } from './mods/coach'
 import { buildPrompt, compactInstructions, kebab, missingHeadings, parseArgs } from './mods/handoff'
 import { resumeEntry } from './mods/resume'
+import { alertSegment, cardLine, clearedBody, degradedPath, parseAlert, reasonTexts, shownKey, statusPrefix, toastLine } from './mods/handoffalert'
 import { agentResumeEntry, handoffsDir, buildMeta, highestK, isFresh, isStaleSections, metaPathFor, agentPathFor, nudgeLine, nudgeText, parseEnvWindow, sectionHashes, STALE_TARGETS, threshold } from './mods/nudge'
 import type { AgentFresh } from './mods/nudge'
 import { windowFor } from './_shared/windows'
 import { ORCH_KEY, TOAST_KEY, isLast, lastKey, pendingKey } from './store'
 import type { LastHandoff, Pending } from './store'
-import type { CoachView, HandoffState, NudgeView } from '../types'
+import type { CoachView, HandoffHealthView, HandoffState, NudgeView } from '../types'
 
 export { isFresh }
 
@@ -38,6 +39,7 @@ const handoffAtom = atom({ plugin: 'compact', key: 'handoff' } as const, { state
 const orchAtom = atom({ plugin: 'compact', key: 'orch' } as const, { on: true })
 const resumeAtom = atom({ plugin: 'compact', key: 'resume' } as const, { pending: false })
 const nudgeAtom = atom({ plugin: 'compact', key: 'nudge' } as const, { armed: false, lastK: -1, fresh: 'none' } as NudgeView)
+const handoffHealthAtom = atom({ plugin: 'compact', key: 'handoffHealth' } as const, { degraded: false, reasons: [] as string[] } as HandoffHealthView)
 const clockAtom = atom({ plugin: 'compact', key: 'clock' } as const, 0)
 /** Agent list for the band render, which must not call `$.agent` (conventions s3.1a); refreshed on agent events and steps. */
 const agentsAtom = atom({ plugin: 'compact', key: 'agents' } as const, [] as { id: string; description: string; status: string }[])
@@ -208,7 +210,7 @@ async function refreshCoach($: EngineInterface, ctx: Ctx): Promise<void> {
     await publish($, ctx, c)
     const shows = opts.mods.coach && ((c.hasCtx && (c.ctx as number) >= opts.showFrom) || effState(rt, opts, now) !== 'idle')
     ensureTimer($, ctx, shows)
-    if (opts.mods.coach) {
+    if (opts.mods.coach || opts.mods.handoffalert) {
       let noBand = rt.headless
       if (!noBand) {
         try {
@@ -219,7 +221,9 @@ async function refreshCoach($: EngineInterface, ctx: Ctx): Promise<void> {
         }
       }
       rt.hasBand = !noBand
-      const t = noBand ? coachStatus(c, rt, opts, now) : undefined
+      const base = opts.mods.coach ? coachStatus(c, rt, opts, now) : undefined
+      const pre = opts.mods.handoffalert && rt.alert.active ? statusPrefix(reasonTexts(rt.alert.reasons)) : undefined
+      const t = noBand ? (pre ? (base ? `${pre} · ${base}` : pre) : base) : undefined
       if (t || rt.statusSet) $.ui.status(t)
       rt.statusSet = !!t
     }
@@ -283,7 +287,8 @@ async function coachOnEnd($: EngineInterface, e: { reason: string }, ctx: Ctx): 
 }
 
 async function coachCommand($: EngineInterface, ctx: Ctx): Promise<{ text: string }> {
-  const card = cardText(await calcNow($, ctx), ctx)
+  let card = cardText(await calcNow($, ctx), ctx)
+  if (ctx.opts.mods.handoffalert) card = `${card}\n${cardLine(ctx.rt.alert.active, reasonTexts(ctx.rt.alert.reasons))}`
   if (!ctx.opts.mods.nudge) return { text: card }
   let line = ''
   try {
@@ -980,6 +985,183 @@ async function nudgeCardLine($: EngineInterface, ctx: Ctx): Promise<string> {
 }
 
 // ---------------------------------------------------------------------------
+// Handoff alert (F36): reads <sid>-degraded.json (written by the handoff hooks), toast + band chip, clears on /handoff or a fresh agent file.
+
+async function alertIdentity($: EngineInterface, ctx: Ctx): Promise<boolean> {
+  const a = ctx.rt.alert
+  if (!a.home) {
+    try {
+      const h = await $.env.get('HOME')
+      if (h) a.home = h
+    } catch {
+      // no home: no alert
+    }
+  }
+  if (!a.home) return false
+  const sid = (await sessionId($)).replace(/\//g, '_')
+  if (a.sid !== undefined && a.sid !== sid) {
+    a.flush?.cancel()
+    Object.assign(a, { active: false, reasons: [], ts: undefined, raw: undefined, clearedTs: -Infinity, shownTs: undefined, shownLoaded: false, compactAt: undefined, readsLeft: 0, lastReadAt: undefined, pub: undefined, flush: undefined })
+  }
+  a.sid = sid
+  return true
+}
+
+async function alertPublish($: EngineInterface, ctx: Ctx): Promise<void> {
+  const a = ctx.rt.alert
+  const v: HandoffHealthView = a.active ? { degraded: true, reasons: reasonTexts(a.reasons), since: a.ts } : { degraded: false, reasons: [] }
+  const j = JSON.stringify(v)
+  if (j === a.pub) return
+  a.pub = j
+  await update($, handoffHealthAtom, () => v)
+  await refreshCoach($, ctx)
+}
+
+/** One toast per (sid, ts): same queue and peer-gap rules as the Coach toast, none of its episode rules. */
+async function alertToast($: EngineInterface, ctx: Ctx): Promise<void> {
+  const { rt } = ctx
+  const a = rt.alert
+  if (!a.active || a.ts == null || !a.sid) return
+  if (!a.shownLoaded) {
+    a.shownLoaded = true
+    try {
+      const v = (await $.store.get(shownKey(a.sid))) as { ts?: unknown } | undefined
+      if (v && typeof v.ts === 'number') a.shownTs = v.ts
+    } catch {
+      // not shown before
+    }
+  }
+  if (a.shownTs != null && a.shownTs >= a.ts) return
+  if (!rt.hasBand) return
+  const now = await $.clock.now()
+  const w = await toastWaitMs(
+    { readPeer: name => peerValue($, name) },
+    { now, lastShownAt: undefined, minGapMs: 60_000, peers: ['awareness.headsup', 'dev.toast'], respectQuiet: true },
+  )
+  if (w === 0) {
+    $.ui.toast(toastLine(reasonTexts(a.reasons)))
+    a.shownTs = a.ts
+    a.flush = undefined
+    await $.store.set(shownKey(a.sid), { v: 1, ts: a.ts })
+  } else {
+    // Infinity = quiet (focus phase or Heads-Up mute): retry at the mute end, else in 30 s.
+    let delay = w
+    if (!Number.isFinite(w)) {
+      delay = 30_000
+      try {
+        const h = await peerValue($, 'awareness.headsup')
+        if (typeof h?.mutedUntil === 'number' && h.mutedUntil > now) delay = h.mutedUntil - now
+      } catch {
+        // keep 30 s
+      }
+    }
+    a.flush?.cancel()
+    a.flush = $.clock.after(delay + 50, () => void safe(() => alertToast($, ctx)))
+  }
+}
+
+async function alertClear($: EngineInterface, ctx: Ctx, writeFile: boolean): Promise<void> {
+  const a = ctx.rt.alert
+  if (!a.active) return
+  const raw = a.raw
+  const path = a.home && a.sid ? degradedPath(a.home, a.sid) : undefined
+  if (a.ts != null) a.clearedTs = a.ts
+  a.active = false
+  a.reasons = []
+  a.flush?.cancel()
+  if (writeFile && raw && path) {
+    try {
+      await $.fs.write(path, clearedBody(raw, await $.clock.now()))
+    } catch (err) {
+      if (!a.clearFailLogged) {
+        a.clearFailLogged = true
+        $.ui.log(`compact handoff alert: could not mark the alert cleared (${errText(err)})`, { to: 'debug' })
+      }
+    }
+  }
+  await alertPublish($, ctx)
+}
+
+/** Reads the degraded file and moves the alert state; toast on a new (sid, ts). */
+async function alertRead($: EngineInterface, ctx: Ctx): Promise<void> {
+  const a = ctx.rt.alert
+  if (!ctx.opts.mods.handoffalert || !(await alertIdentity($, ctx)) || !a.home || !a.sid) return
+  const path = degradedPath(a.home, a.sid)
+  a.lastReadAt = await $.clock.now()
+  let body: string | undefined
+  try {
+    if (await $.fs.exists(path)) body = (await $.fs.read(path)) ?? undefined
+  } catch (err) {
+    if (!a.unreadableLogged) {
+      a.unreadableLogged = true
+      $.ui.log(`compact handoff alert: degraded file unreadable (${errText(err)})`, { to: 'debug' })
+    }
+    body = undefined
+  }
+  const f = parseAlert(body)
+  if (f && !f.cleared && f.ts > a.clearedTs) {
+    a.active = true
+    a.reasons = f.reasons
+    a.ts = f.ts
+    a.raw = f.raw
+    if (a.compactAt != null && f.ts > a.compactAt) a.readsLeft = 0
+    await alertPublish($, ctx)
+    await safe(() => alertToast($, ctx))
+    return
+  }
+  if (a.active) {
+    a.active = false
+    a.reasons = []
+  }
+  await alertPublish($, ctx)
+}
+
+/** Clearing (F36.6): a /handoff saved after `ts`, or the agent file rewritten after `ts` and fresh. */
+async function alertCheckClear($: EngineInterface, ctx: Ctx): Promise<void> {
+  const a = ctx.rt.alert
+  if (!ctx.opts.mods.handoffalert || !a.active || a.ts == null || !a.sid) return
+  const last = await $.store.get(lastKey(a.sid))
+  if (isLast(last) && last.savedAt > a.ts) return alertClear($, ctx, true)
+  const p = await agentPending($, ctx, await $.clock.now())
+  if (p && p.savedAt > a.ts) return alertClear($, ctx, true)
+}
+
+async function alertOnCompact($: EngineInterface, e: { agentId?: string; trigger: string }, r: { skip?: string }, ctx: Ctx): Promise<void> {
+  const a = ctx.rt.alert
+  if (!ctx.opts.mods.handoffalert || e.agentId || e.trigger === 'precompute' || r.skip !== undefined) return
+  a.compactAt = await $.clock.now()
+  a.readsLeft = 3
+  a.lastReadAt = undefined
+  await alertRead($, ctx)
+}
+
+async function alertOnMeasure($: EngineInterface, ctx: Ctx): Promise<void> {
+  const a = ctx.rt.alert
+  if (!ctx.opts.mods.handoffalert) return
+  const now = await $.clock.now()
+  if (a.readsLeft > 0 && (a.lastReadAt == null || now - a.lastReadAt >= 5000)) {
+    a.readsLeft--
+    await alertRead($, ctx)
+    if (a.readsLeft === 0 && a.active && a.compactAt != null && a.ts != null && a.ts <= a.compactAt) await alertClear($, ctx, false)
+    return
+  }
+  if (a.active) {
+    await alertCheckClear($, ctx)
+    if (a.active && (a.shownTs == null || a.ts == null || a.shownTs < a.ts)) await safe(() => alertToast($, ctx))
+  }
+}
+
+async function alertOnEnd($: EngineInterface, e: { reason: string }, ctx: Ctx): Promise<void> {
+  const a = ctx.rt.alert
+  if (!ctx.opts.mods.handoffalert || e.reason !== 'clear') return
+  a.flush?.cancel()
+  a.active = false
+  a.reasons = []
+  a.sid = undefined
+  await alertPublish($, ctx)
+}
+
+// ---------------------------------------------------------------------------
 // Orchestrator mode
 
 async function loadOrch($: EngineInterface, ctx: Ctx): Promise<void> {
@@ -1070,9 +1252,16 @@ async function registerCommands($: EngineInterface, ctx: Ctx): Promise<void> {
 }
 
 async function bandSegments($: EngineInterface, ctx: Ctx): Promise<(Segment | null)[]> {
-  if (!ctx.opts.mods.coach) return []
-  const now = await $.clock.now()
-  return [coachSegment(await calcNow($, ctx, true), ctx, now)]
+  const segs: (Segment | null)[] = []
+  if (ctx.opts.mods.handoffalert) {
+    const v = await read($, handoffHealthAtom)
+    if (v.degraded) segs.push(alertSegment(v.reasons))
+  }
+  if (ctx.opts.mods.coach) {
+    const now = await $.clock.now()
+    segs.push(coachSegment(await calcNow($, ctx, true), ctx, now))
+  }
+  return segs
 }
 
 // ---------------------------------------------------------------------------
@@ -1116,6 +1305,7 @@ export const register: Register = (on, options) => {
       }
       if (opts.mods.orch) await loadOrch($, ctx)
       await safe(() => nudgeOnStart($, ctx))
+      await safe(() => alertRead($, ctx))
       await refreshCoach($, ctx)
     } catch (err) {
       $.ui.log(`compact: start ${errText(err)}`, { to: 'debug' })
@@ -1151,6 +1341,7 @@ export const register: Register = (on, options) => {
     await safe(async () => {
       nudge = await nudgeOnPrompt($, ctx, (e as { text?: string; agentId?: string }).agentId ? undefined : e.text)
     })
+    await safe(() => alertCheckClear($, ctx))
     const add = [entry, nudge].filter((x): x is string => x != null)
     return next(add.length === 0 ? e : { ...e, context: [...(e.context ?? []), ...add] })
   }).catch(($, e, next) => next(e))
@@ -1158,6 +1349,7 @@ export const register: Register = (on, options) => {
   on('session.measure', async ($, e, next) => {
     const r = await next(e)
     await safe(() => nudgeOnMeasure($, e, ctx))
+    await safe(() => alertOnMeasure($, ctx))
     await safe(() => coachOnMeasure($, e, ctx))
     return r
   }).catch(($, e, next) => next(e))
@@ -1174,6 +1366,7 @@ export const register: Register = (on, options) => {
     await safe(() => handoffOnCompact($, e, r, ctx))
     await safe(() => resumeOnCompact($, e, r, ctx))
     await safe(() => nudgeOnCompact($, e, r, ctx))
+    await safe(() => alertOnCompact($, e, r, ctx))
     await safe(() => coachOnCompact($, e, r, ctx))
     return r
   }).catch(($, e, next) => next(e))
@@ -1182,6 +1375,7 @@ export const register: Register = (on, options) => {
     await safe(() => handoffOnEnd($, e, ctx))
     await safe(() => resumeOnEnd($, e, ctx))
     await safe(() => nudgeOnEnd($, ctx))
+    await safe(() => alertOnEnd($, e, ctx))
     await safe(() => coachOnEnd($, e, ctx))
     return next(e)
   }).catch(($, e, next) => next(e))

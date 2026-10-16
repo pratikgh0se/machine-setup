@@ -48,6 +48,7 @@ export type CoachView = {
   lastShownAt?: number
 }
 export type NudgeView = { armed: boolean; lastK: number; next?: number; window?: number; lastNudgeAt?: number; fresh: 'fresh' | 'stale' | 'none' }
+export type HandoffHealthView = { degraded: boolean; reasons: string[]; since?: number }
 export type HandoffState = 'idle' | 'writing' | 'ready' | 'saved' | 'compacting' | 'done' | 'failed'
 export type HandoffView = {
   state: HandoffState
@@ -76,6 +77,7 @@ declare module 'claude-code' {
       orch: { on: boolean }
       resume: { pending: boolean }
       nudge: NudgeView
+      handoffHealth: HandoffHealthView
       clock: number
       agents: { id: string; description: string; status: string }[]
     }

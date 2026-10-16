@@ -1,3 +1,4 @@
 # label	required_path	repo	needs
 __LABEL_PREFIX__.machine-setup-autosync	-	-	overlay
 __LABEL_PREFIX__.token-budget	-	-	-
+__LABEL_PREFIX__.handoff-canary	-	-	-

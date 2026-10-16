@@ -1,6 +1,6 @@
 {
   "name": "compact",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Compact Coach, /handoff, Resume loader and Orchestrator mode: compact at the right moment and keep the thread across it",
   "types": "./types/index.d.ts",
   "author": {
@@ -36,6 +36,12 @@
       "type": "boolean",
       "title": "Handoff nudge",
       "description": "Remind the working model to write its own handoff before compaction (one short note, no extra turn)",
+      "default": true
+    },
+    "mod_handoffalert_enabled": {
+      "type": "boolean",
+      "title": "Handoff alert",
+      "description": "Toast and band chip when a compaction's handoff is degraded (missing, stale or partly failed)",
       "default": true
     },
     "coach_showFromTokens": {

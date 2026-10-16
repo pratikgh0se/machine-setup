@@ -71,6 +71,45 @@ def esc(s):
     return str(s).replace("|", "\\|").replace("\n", " ")
 
 
+def handoff_lines(res, cur, today):
+    """`### Handoff health` (token-budget spec H.2): counts, dates and reason codes only."""
+    hh = res["handoff_health"] if "handoff_health" in res else cur.get("handoff_health")
+    L = ["", "### Handoff health", ""]
+    if not isinstance(hh, dict):
+        return L + ["n/a"]
+    n = hh.get("compactions", 0)
+    can = hh.get("canary") or {}
+    if n == 0 and not can.get("last_ts"):
+        return L + ["no data in window"]
+    dr = hh.get("degraded_rate")
+    deg = "degraded %d (%.1f%%)" % (hh.get("degraded", 0), dr * 100) if dr is not None else "degraded n/a"
+    L.append("compactions %d (auto %d, manual %d), ok %d, reduced %d, %s, window %d days (as of %s)" % (
+        n, hh.get("auto", 0), hh.get("manual", 0), hh.get("ok", 0), hh.get("reduced", 0), deg,
+        hh.get("window_days", 7), today))
+    fb = hh.get("fallback") or {}
+    L.append("fallback: ok %d, failed %d, timeout %d, skipped %d, disabled %d" % tuple(
+        fb.get(k, 0) for k in ("ok", "failed", "timeout", "skipped", "disabled")))
+    af = hh.get("agent_file") or {}
+    L.append("agent file: fresh %d, stale %d, absent %d" % tuple(af.get(k, 0) for k in ("fresh", "stale", "absent")))
+    if not can.get("last_ts"):
+        L.append("canary: no runs recorded")
+    else:
+        strip = " \u00b7 ".join("%s %s" % (x["date"], x["result"]) for x in can.get("nights", []))
+        line = "canary: %d pass / %d fail / %d skip in the last 7 nights" % (can.get("pass", 0), can.get("fail", 0), can.get("skip", 0))
+        L.append(line + (" " + strip if strip else ""))
+        try:
+            if T.now_utc() - T.parse_iso(can["last_ts"]) > timedelta(days=3):
+                L[-1] += " (last run %s, stale)" % T.local_date(T.parse_iso(can["last_ts"]))
+        except Exception:
+            pass
+    tr = hh.get("top_reasons") or []
+    L.append("top reasons: " + (", ".join("%s x%d" % (r["reason"], r["count"]) for r in tr) if tr else "none"))
+    for p in res.get("proposals", []):
+        if p.get("id") == "handoff-degraded":
+            L.append("FLAG handoff-degraded: " + ", ".join((p.get("evidence") or {}).get("triggers", [])))
+    return L
+
+
 def build_block(res, rows, cur, state, today):
     h = headline(res)
     cats = cur.get("categories", {})
@@ -134,6 +173,7 @@ def build_block(res, rows, cur, state, today):
             L.append("- %s: %s (as of %s)" % (r["kind"], esc(r["cause"]), today))
     else:
         L.append("None (as of %s)" % today)
+    L += handoff_lines(res, cur, today)
     L += ["", "## Proposals"]
     if res["proposals"]:
         L += ["| id | est. saving | title | command |", "|---|---|---|---|"]

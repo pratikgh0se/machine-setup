@@ -8,6 +8,8 @@ import { parseWindowsJson } from './_shared/windows'
 import type { WindowOverrides } from './_shared/windows'
 import { clampEvery, clampPercent, makeNudgeRt } from './mods/nudge'
 import type { NudgeRt } from './mods/nudge'
+import { makeAlertRt } from './mods/handoffalert'
+import type { AlertRt } from './mods/handoffalert'
 import type { PriceOverrides, PriceRow } from './_shared/prices'
 
 // ---------------------------------------------------------------------------
@@ -34,7 +36,7 @@ export type Opts = {
   nudgeAtPercent: number
   nudgeEvery: number
   windowsJson: string
-  mods: Record<'coach' | 'handoff' | 'resume' | 'orch' | 'nudge', boolean>
+  mods: Record<'coach' | 'handoff' | 'resume' | 'orch' | 'nudge' | 'handoffalert', boolean>
 }
 
 // userConfig keys cannot contain dots (validate: "Invalid key in record"), so the manifest spells the spec's
@@ -82,6 +84,7 @@ export function readOpts(o: PluginOptions | undefined): Opts {
       resume: bool(x, 'mod.resume.enabled', true),
       orch: bool(x, 'mod.orch.enabled', true),
       nudge: bool(x, 'mod.nudge.enabled', true),
+      handoffalert: bool(x, 'mod.handoffalert.enabled', true),
     },
   }
 }
@@ -144,6 +147,7 @@ export type Rt = {
   pricesBad: boolean
   pricesLogged: boolean
   nudge: NudgeRt
+  alert: AlertRt
   winOverrides?: WindowOverrides
   winBad: boolean
   winLogged: boolean
@@ -169,6 +173,7 @@ export function makeRt(opts: Opts): Rt {
     pricesBad: !p.ok,
     pricesLogged: false,
     nudge: makeNudgeRt(),
+    alert: makeAlertRt(),
     winOverrides: w.ok ? w.overrides : undefined,
     winBad: !w.ok,
     winLogged: false,

@@ -17,6 +17,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import tblib as T  # noqa: E402
 import tb_spend  # noqa: E402
+import tb_handoff  # noqa: E402
 
 
 def read(path):
@@ -437,6 +438,9 @@ def cmd_build(a):
     warnings += pw
     breakdown, bw = tb_spend.compute(T.claude_home(), now, prices, spend["weekly_usd"])
     warnings += bw
+    hh, hw = tb_handoff.compute(tb_handoff.default_path(), now)
+    if hw:
+        warnings.append(hw)
     version = detect_version(ctx, turn)
     manifest = build_manifest(ctx, ts, settings_objs, warnings, version)
     mrel = "manifests/%s.json" % ts.replace(":", "-")
@@ -449,6 +453,7 @@ def cmd_build(a):
         "trivial_turn": {k: v for k, v in turn.items() if not k.startswith("_")},
         "spend": spend,
         "spend_breakdown": breakdown,
+        "handoff_health": hh,
         "manifest": mrel,
         "denied_mcp_notices": ctx["denied_mcp_notices"],
         "warnings": warnings,
