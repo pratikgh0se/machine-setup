@@ -1,0 +1,84 @@
+{
+  "cleanupPeriodDays": 365,
+  "env": {
+    "CLAUDE_CODE_SUBAGENT_MODEL": "sonnet",
+    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "400000"
+  },
+  "permissions": {
+    "allow": [
+      "Edit(~/.local/state/claude-handoffs/**)",
+      "Write(~/.local/state/claude-handoffs/**)",
+      "Bash(ps:*)",
+      "Bash(grep:*)",
+      "Bash(tail:*)",
+      "Bash(head:*)",
+      "Bash(cat:*)",
+      "Bash(wc:*)",
+      "Bash(ls:*)",
+      "Bash(git log:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git show:*)"
+    ],
+    "deny": [
+      "Read(**/node_modules/**)",
+      "Read(**/dist/**)",
+      "Read(**/coverage/**)"
+    ]
+  },
+  "model": "opus",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "compact",
+        "hooks": [
+          { "type": "command", "command": "python3 __HOME__/.claude/hooks/postcompact-inject.py", "timeout": 10 }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "__HOME__/.claude/hooks/no-git-stash.sh" },
+          { "type": "command", "command": "__HOME__/.claude/hooks/no-root-walks.py" }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          { "type": "command", "command": "python3 __HOME__/.claude/hooks/precompact-handoff.py", "timeout": 90 }
+        ]
+      }
+    ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "ccusage statusline --visual-burn-rate emoji --cost-source both",
+    "padding": 0
+  },
+  "enabledPlugins": {
+    "safety@bento": true,
+    "usage@bento": true,
+    "awareness@bento": true,
+    "agents@bento": true,
+    "dev@bento": true,
+    "compact@bento": true
+  },
+  "extraKnownMarketplaces": {
+    "bento": {
+      "source": { "source": "github", "repo": "pratikgh0se/machine-setup" }
+    }
+  },
+  "sandbox": { "enabled": false },
+  "effortLevel": "medium",
+  "theme": "dark",
+  "skillOverrides": {},
+  "deniedMcpServers": [],
+  "autoMode": {
+    "soft_deny": ["$defaults"],
+    "environment": []
+  },
+  "outputStyle": "Concise"
+}

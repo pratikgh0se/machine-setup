@@ -1,0 +1,152 @@
+// SVG building blocks in the Still Room look (conventions s5). Pure string builders.
+import { BAND_H, FONT, MIN_FONT_PX, SIGNAL_FILL, TOKENS_STYLE, V } from './tokens'
+import type { Signal } from './tokens'
+import { CARROT_IDLE, POM_IDLE } from './mascots'
+import { xml } from './fmt'
+
+export { xml }
+
+/** Full `<svg>` document: tokens style once, then `body`. Source must stay < 131072 chars. */
+export function svgDoc(w: number, h: number, body: string): string {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" shape-rendering="crispEdges">${TOKENS_STYLE}${body}</svg>`
+}
+
+// --- text metrics ----------------------------------------------------------
+export type Face = 'pixel' | 'mono' | 'body'
+/** Approximate advance per character in em. Silkscreen/Space Mono are fixed-pitch-ish. */
+const EM: Record<Face, number> = { pixel: 0.62, mono: 0.6, body: 0.55 }
+/** Width in px of `s` at `size` (includes the 1 px letter-spacing of the pixel face). */
+export function textWidth(s: string, size: number, face: Face = 'pixel'): number {
+  const n = [...s].length
+  return Math.ceil(n * (EM[face] * size + (face === 'pixel' ? 1 : 0)))
+}
+/** Clip `s` so it fits `maxPx`. */
+export function fit(s: string, maxPx: number, size: number, face: Face = 'pixel'): string {
+  if (textWidth(s, size, face) <= maxPx) return s
+  const per = EM[face] * size + (face === 'pixel' ? 1 : 0)
+  const n = Math.max(1, Math.floor(maxPx / per) - 1)
+  return [...s].slice(0, n).join('').trimEnd() + '…'
+}
+
+export type TextOpts = { size?: number; face?: Face; fill?: string; anchor?: 'start' | 'middle' | 'end'; opacity?: number; weight?: number }
+/** `<text>` at baseline y. Font size is raised to MIN_FONT_PX if lower. Caps are the caller's job. */
+export function text(x: number, y: number, s: string, o: TextOpts = {}): string {
+  const size = Math.max(MIN_FONT_PX, o.size ?? 12)
+  const face = o.face ?? 'pixel'
+  const cls = face === 'pixel' ? '' : ` class="${face}"`
+  const fill = o.fill ?? V.text
+  const extra = (o.anchor ? ` text-anchor="${o.anchor}"` : '') + (o.opacity != null ? ` opacity="${o.opacity}"` : '') + (o.weight ? ` font-weight="${o.weight}"` : '')
+  return `<text x="${x}" y="${y}" font-size="${size}" fill="${fill}"${cls}${extra}>${xml(s)}</text>`
+}
+
+// --- bevel -------------------------------------------------------------------
+export type BevelOpts = { tone?: 'panel' | 'tile'; fill?: string; edge?: string; drop?: number; opacity?: number }
+/**
+ * Bevelled box: solid drop behind, fill with 2 px edge, hi strips top/left, shade strips bottom/right.
+ * Occupies x..x+w, y..y+h (+drop). `edge` may be a signal var for a 2 px signal edge.
+ */
+export function bevel(x: number, y: number, w: number, h: number, o: BevelOpts = {}): string {
+  const tile = o.tone === 'tile'
+  const fill = o.fill ?? (tile ? V.tile : V.panel)
+  const edge = o.edge ?? V.edge
+  const hi = tile ? V.hiTile : V.hi
+  const sh = tile ? V.shadeTile : V.shade
+  const d = o.drop ?? 2
+  const op = o.opacity != null ? ` opacity="${o.opacity}"` : ''
+  return (
+    `<g${op}>` +
+    (d > 0 ? `<rect x="${x + d}" y="${y + d}" width="${w}" height="${h}" fill="${V.edge}"/>` : '') +
+    `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="${fill}"/>` +
+    `<rect x="${x + 2}" y="${y + 2}" width="${w - 4}" height="2" fill="${hi}"/>` +
+    `<rect x="${x + 2}" y="${y + 2}" width="2" height="${h - 4}" fill="${hi}"/>` +
+    `<rect x="${x + 2}" y="${y + h - 4}" width="${w - 4}" height="2" fill="${sh}"/>` +
+    `<rect x="${x + w - 4}" y="${y + 2}" width="2" height="${h - 4}" fill="${sh}"/>` +
+    `<rect x="${x + 1}" y="${y + 1}" width="${w - 2}" height="${h - 2}" fill="none" stroke="${edge}" stroke-width="2"/>` +
+    `</g>`
+  )
+}
+
+// --- segment meter -----------------------------------------------------------
+export type MeterOpts = {
+  cells?: number
+  cellW?: number
+  cellH?: number
+  gap?: number
+  /** Filled cell count (rounded); or use `ratio`. */
+  filled?: number
+  ratio?: number
+  /** Ratio from which filled cells turn warn / danger (usage: 0.8 / 0.95). Omit = base colour only. */
+  warnAt?: number
+  dangerAt?: number
+  /** Base fill colour for filled cells. */
+  color?: string
+  /** Hatched (estimate) fill: half-height cells. */
+  hatched?: boolean
+}
+export const meterWidth = (cells = 12, cellW = 8, gap = 2): number => cells * cellW + (cells - 1) * gap
+/** 12 cells of 8x10 px, gap 2 (conventions s5.1). Empty cells are --well with an edge. */
+export function segMeter(x: number, y: number, o: MeterOpts = {}): string {
+  const cells = o.cells ?? 12
+  const cw = o.cellW ?? 8
+  const ch = o.cellH ?? 10
+  const gap = o.gap ?? 2
+  const filled = Math.max(0, Math.min(cells, o.filled != null ? Math.round(o.filled) : Math.round((o.ratio ?? 0) * cells)))
+  const base = o.color ?? V.accent
+  const warnFrom = o.warnAt != null ? Math.round(o.warnAt * cells) : Infinity
+  const dangerFrom = o.dangerAt != null ? Math.round(o.dangerAt * cells) : Infinity
+  let out = ''
+  for (let i = 0; i < cells; i++) {
+    const cx = x + i * (cw + gap)
+    const on = i < filled
+    const fill = !on ? V.well : i >= dangerFrom ? V.danger : i >= warnFrom ? V.warn : base
+    const hh = on && o.hatched ? Math.floor(ch / 2) : ch
+    out += `<rect x="${cx}" y="${y}" width="${cw}" height="${ch}" fill="${V.well}" stroke="${V.edge}" stroke-width="1"/>`
+    if (on) out += `<rect x="${cx}" y="${y + ch - hh}" width="${cw}" height="${hh}" fill="${fill}"/>`
+  }
+  return out
+}
+
+// --- chip ------------------------------------------------------------------------
+export type ChipOpts = { signal?: Signal; size?: number; face?: Face; padX?: number; h?: number; textFill?: string; dim?: boolean }
+/** Bevelled tile with a caps label and a 2 px signal edge. Returns the fragment and its width. */
+export function chip(x: number, y: number, label: string, o: ChipOpts = {}): { svg: string; w: number; h: number } {
+  const size = Math.max(MIN_FONT_PX, o.size ?? 10)
+  const face = o.face ?? 'pixel'
+  const padX = o.padX ?? 8
+  const h = o.h ?? 22
+  const w = textWidth(label, size, face) + padX * 2
+  const edge = o.signal ? SIGNAL_FILL[o.signal] : V.edge
+  const svg =
+    bevel(x, y, w, h, { tone: 'tile', edge, opacity: o.dim ? 0.6 : undefined }) +
+    text(x + w / 2, y + h / 2 + Math.round(size * 0.35), label, { size, face, anchor: 'middle', fill: o.textFill ?? V.text })
+  return { svg, w, h }
+}
+
+/** 14x14 bevelled Still Room block mark (mascot fallback, failed pets). */
+export function blockMark(x: number, y: number, o: { size?: number; signal?: Signal; rival?: boolean } = {}): string {
+  const s = o.size ?? 14
+  const fill = o.rival ? V.rival : V.accent
+  return bevel(x, y, s, s, { fill, edge: o.signal ? SIGNAL_FILL[o.signal] : V.edge, drop: 1 })
+}
+
+// --- mascots ---------------------------------------------------------------------
+export type MascotMode = 'auto' | 'on' | 'off'
+/**
+ * Pom or Carrot still. `auto`/`on` embed the PNG as `<image data-mascot="pom|carrot" href="data:...">`;
+ * `off` draws the block mark (rival blue for Carrot) instead. Whether the desktop keeps data: images is
+ * decided by the mascot probe; plugins pass `options.mascots` (`'off'` = fallback). At most two per SVG.
+ */
+export function mascotSvg(kind: 'pom' | 'carrot', x: number, y: number, size = 40, o: { mode?: MascotMode; opacity?: number } = {}): string {
+  if (o.mode === 'off') {
+    const s = Math.round(size * 0.35)
+    return `<g data-mascot-fallback="${kind}">${blockMark(x + Math.round((size - s) / 2), y + Math.round((size - s) / 2), { size: s, rival: kind === 'carrot' })}</g>`
+  }
+  const b64 = kind === 'pom' ? POM_IDLE : CARROT_IDLE
+  const op = o.opacity != null ? ` opacity="${o.opacity}"` : ''
+  return `<image data-mascot="${kind}" href="data:image/png;base64,${b64}" x="${x}" y="${y}" width="${size}" height="${size}"${op}/>`
+}
+
+/** Convenience: a 30 px band row document. */
+export const bandDoc = (w: number, body: string): string => svgDoc(w, BAND_H, body)
+
+export { FONT }

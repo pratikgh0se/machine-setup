@@ -1,0 +1,233 @@
+{
+  "name": "dev",
+  "version": "1.0.4",
+  "description": "Code state while agents work: git branch, session diff, test pulse, coverage delta, typecheck feedback, PR radar and port watch",
+  "types": "./types/index.d.ts",
+  "author": {
+    "name": "Pratik Ghose",
+    "url": "https://github.com/pratikgh0se"
+  },
+  "userConfig": {
+    "mod_git_enabled": {
+      "type": "boolean",
+      "title": "Git chip enabled",
+      "description": "Turn the Git chip mod on or off. Off registers no hooks and draws nothing.",
+      "default": true
+    },
+    "mod_diff_enabled": {
+      "type": "boolean",
+      "title": "Session Diff enabled",
+      "description": "Turn the Session Diff mod on or off. Off registers no hooks and draws nothing.",
+      "default": true
+    },
+    "mod_pulse_enabled": {
+      "type": "boolean",
+      "title": "Test Pulse enabled",
+      "description": "Turn the Test Pulse mod on or off. Off registers no hooks and draws nothing.",
+      "default": true
+    },
+    "mod_coverage_enabled": {
+      "type": "boolean",
+      "title": "Coverage Delta enabled",
+      "description": "Turn the Coverage Delta mod on or off. Off registers no hooks and draws nothing.",
+      "default": true
+    },
+    "mod_typecheck_enabled": {
+      "type": "boolean",
+      "title": "Typecheck Feedback enabled",
+      "description": "Turn the Typecheck Feedback mod on or off. Off registers no hooks and draws nothing.",
+      "default": true
+    },
+    "mod_pr_enabled": {
+      "type": "boolean",
+      "title": "PR Radar enabled",
+      "description": "Turn the PR Radar mod on or off. Off registers no hooks and draws nothing.",
+      "default": true
+    },
+    "mod_ports_enabled": {
+      "type": "boolean",
+      "title": "Port Watch enabled",
+      "description": "Turn the Port Watch mod on or off. Off registers no hooks and draws nothing.",
+      "default": true
+    },
+    "minBandRows": {
+      "type": "number",
+      "title": "Minimum band rows",
+      "description": "The band stays silent when the screen has fewer free rows than this.",
+      "default": 4
+    },
+    "idleMinutes": {
+      "type": "number",
+      "title": "Idle minutes",
+      "description": "Background polling (gh, lsof) pauses when there was no user input for this long.",
+      "default": 30
+    },
+    "git_minRefreshSec": {
+      "type": "number",
+      "title": "Git min refresh (s)",
+      "description": "Minimum seconds between git status refreshes.",
+      "default": 5
+    },
+    "git_untracked": {
+      "type": "string",
+      "title": "Git untracked files",
+      "description": "normal counts untracked files; no skips them (huge repos).",
+      "default": "normal",
+      "options": [
+        "normal",
+        "no"
+      ]
+    },
+    "git_showWorktree": {
+      "type": "boolean",
+      "title": "Show worktree name",
+      "description": "Append the linked worktree name to the git chip.",
+      "default": true
+    },
+    "changes_minRefreshSec": {
+      "type": "number",
+      "title": "Session Diff min refresh (s)",
+      "description": "Minimum seconds between tree snapshots.",
+      "default": 5
+    },
+    "changes_maxRows": {
+      "type": "number",
+      "title": "Session Diff max rows",
+      "description": "Rows shown in the changes pane before '+N more'.",
+      "default": 50
+    },
+    "changes_openCommand": {
+      "type": "string",
+      "title": "Open command",
+      "description": "Command run by /changes open <n>; {path} is the absolute file path.",
+      "default": "open {path}"
+    },
+    "pr_enabled": {
+      "type": "boolean",
+      "title": "PR Radar enabled",
+      "description": "Fetch pull requests with gh.",
+      "default": true
+    },
+    "pr_intervalSec": {
+      "type": "number",
+      "title": "PR poll interval (s)",
+      "description": "Base seconds between gh calls (never below 60).",
+      "default": 60
+    },
+    "pr_maxPrs": {
+      "type": "number",
+      "title": "PR limit",
+      "description": "Maximum pull requests listed per gh call.",
+      "default": 100
+    },
+    "pr_toastOnFail": {
+      "type": "boolean",
+      "title": "Toast on failing checks",
+      "description": "Raise one toast when checks on your own open PR flip to failing.",
+      "default": true
+    },
+    "pulse_includeSubagents": {
+      "type": "boolean",
+      "title": "Test Pulse: include subagents",
+      "description": "Count test runs made by subagents.",
+      "default": false
+    },
+    "pulse_flaky": {
+      "type": "boolean",
+      "title": "Test Pulse: flaky detection",
+      "description": "Track tests that fail and then pass with no edits between.",
+      "default": true
+    },
+    "pulse_maxNames": {
+      "type": "number",
+      "title": "Test Pulse: max names",
+      "description": "Maximum failing test names kept per run.",
+      "default": 20
+    },
+    "coverage_baseline": {
+      "type": "string",
+      "title": "Coverage baseline",
+      "description": "session-first: first reading this session; last-clean: stored reading from a clean tree.",
+      "default": "session-first",
+      "options": [
+        "session-first",
+        "last-clean"
+      ]
+    },
+    "coverage_warnDropPts": {
+      "type": "number",
+      "title": "Coverage drop warning (pts)",
+      "description": "A drop beyond this many percentage points uses the warning look.",
+      "default": 1.0
+    },
+    "coverage_metric": {
+      "type": "string",
+      "title": "Coverage metric",
+      "description": "Which istanbul total to read.",
+      "default": "lines",
+      "options": [
+        "lines",
+        "statements"
+      ]
+    },
+    "tc_mode": {
+      "type": "string",
+      "title": "Typecheck mode",
+      "description": "context: feed errors back to Claude; band: chip only; off.",
+      "default": "context",
+      "options": [
+        "context",
+        "band",
+        "off"
+      ]
+    },
+    "tc_tsc": {
+      "type": "boolean",
+      "title": "Typecheck: tsc",
+      "description": "Run incremental tsc on edited TypeScript files.",
+      "default": true
+    },
+    "tc_ruff": {
+      "type": "boolean",
+      "title": "Typecheck: ruff",
+      "description": "Run ruff on edited Python files.",
+      "default": true
+    },
+    "tc_eslint": {
+      "type": "boolean",
+      "title": "Typecheck: eslint",
+      "description": "Run eslint on edited JS/TS files when the project has a config.",
+      "default": true
+    },
+    "tc_timeoutSec": {
+      "type": "number",
+      "title": "tsc budget (s)",
+      "description": "Seconds the edit result waits for tsc before returning unchanged.",
+      "default": 20
+    },
+    "tc_maxLines": {
+      "type": "number",
+      "title": "Feedback max lines",
+      "description": "Maximum error lines appended to a tool result.",
+      "default": 10
+    },
+    "ports_enabled": {
+      "type": "boolean",
+      "title": "Port Watch enabled",
+      "description": "Watch listening ports started by agents.",
+      "default": true
+    },
+    "ports_stale_min": {
+      "type": "number",
+      "title": "Stale port minutes",
+      "description": "Listeners older than this are marked stale?.",
+      "default": 30
+    },
+    "ports_kill": {
+      "type": "boolean",
+      "title": "Allow STOP",
+      "description": "Show a two-step STOP button for listeners started by this session's agents.",
+      "default": true
+    }
+  }
+}

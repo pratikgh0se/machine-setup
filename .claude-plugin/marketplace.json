@@ -1,0 +1,54 @@
+{
+  "name": "bento",
+  "owner": {
+    "name": "Pratik Ghose",
+    "url": "https://github.com/pratikgh0se"
+  },
+  "metadata": {
+    "description": "Bento: a box of small, well-made Claude Code mods \u2014 usage, awareness, agents, safety, dev, compact."
+  },
+  "plugins": [
+    {
+      "name": "safety",
+      "source": "./plugins/safety",
+      "description": "Protected Files (deny writes to .env, lockfiles, vault files) and Auto-checkpoint (side-ref snapshots of the working tree). Spends no tokens.",
+      "version": "1.0.3",
+      "category": "mod"
+    },
+    {
+      "name": "usage",
+      "source": "./plugins/usage",
+      "description": "Burn Meter (5-hour and weekly limits with pace), Cache Clock (prompt-cache countdown and cold-return cost) and Compaction Alert, in one band row. Spends no tokens.",
+      "version": "1.0.5",
+      "category": "mod"
+    },
+    {
+      "name": "awareness",
+      "source": "./plugins/awareness",
+      "description": "Tells you what is happening and what needs you, without noise: Heads-Up toasts (max 1 a minute, plus long command timer), Now Doing phase band, Spec Tracker and a Focus Timer that silences the toasts.",
+      "version": "1.0.4",
+      "category": "mod"
+    },
+    {
+      "name": "agents",
+      "source": "./plugins/agents",
+      "description": "Pets in Still Room, Review Queue, Delegation Guard and Mission Board: subagents, unreviewed work, model policy with spend by tier, and plan progress across all agents. Replaces agent-pets.",
+      "version": "1.2.0",
+      "category": "mod"
+    },
+    {
+      "name": "dev",
+      "source": "./plugins/dev",
+      "description": "Code state while agents work: git branch, session diff, test pulse, coverage delta, typecheck feedback, PR radar and port watch",
+      "version": "1.0.4",
+      "category": "mod"
+    },
+    {
+      "name": "compact",
+      "source": "./plugins/compact",
+      "description": "Compact Coach, /handoff, Resume loader and Orchestrator mode: compact at the right moment and keep the thread across it",
+      "version": "1.0.7",
+      "category": "mod"
+    }
+  ]
+}

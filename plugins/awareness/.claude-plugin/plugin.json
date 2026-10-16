@@ -1,0 +1,288 @@
+{
+  "name": "awareness",
+  "version": "1.0.4",
+  "description": "Tells you what is happening and what needs you, without noise: Heads-Up toasts (max 1 a minute, plus long command timer), Now Doing phase band, Spec Tracker and a Focus Timer that silences the toasts.",
+  "types": "./types/index.d.ts",
+  "author": {
+    "name": "Pratik Ghose",
+    "url": "https://github.com/pratikgh0se"
+  },
+  "userConfig": {
+    "mod_headsup_enabled": {
+      "type": "boolean",
+      "title": "Heads-Up",
+      "description": "Toasts for cache, long commands, context, pace, big output, Ollama.",
+      "default": true
+    },
+    "mod_nowdoing_enabled": {
+      "type": "boolean",
+      "title": "Now Doing",
+      "description": "Phase chips, checklist progress and long command timer above the prompt.",
+      "default": true
+    },
+    "mod_spec_enabled": {
+      "type": "boolean",
+      "title": "Spec Tracker",
+      "description": "Count checkboxes of the plan or spec file being edited.",
+      "default": true
+    },
+    "mod_focus_enabled": {
+      "type": "boolean",
+      "title": "Focus Timer",
+      "description": "Pomodoro band segment; Heads-Up stays quiet during focus.",
+      "default": true
+    },
+    "minBandRows": {
+      "type": "number",
+      "title": "Minimum band rows",
+      "description": "The band stays hidden when fewer rows are free.",
+      "default": 4
+    },
+    "mascots": {
+      "type": "string",
+      "title": "Mascots",
+      "description": "auto and on draw Pom as an image on the desktop; off draws a block mark.",
+      "default": "auto",
+      "options": [
+        "auto",
+        "on",
+        "off"
+      ]
+    },
+    "headsup_minGapMs": {
+      "type": "number",
+      "title": "Toast gap (ms)",
+      "description": "Minimum time between two Heads-Up toasts.",
+      "default": 60000
+    },
+    "headsup_idleSec": {
+      "type": "number",
+      "title": "Idle after (s)",
+      "description": "No turn and no prompt for this long counts as idle.",
+      "default": 120
+    },
+    "headsup_queueTtlMin": {
+      "type": "number",
+      "title": "Queue lifetime (min)",
+      "description": "A held toast expires after this long.",
+      "default": 5
+    },
+    "headsup_digestAfterFocus": {
+      "type": "boolean",
+      "title": "Digest after focus",
+      "description": "One toast after a focus block summarising what was held back.",
+      "default": true
+    },
+    "headsup_trigger_cache": {
+      "type": "boolean",
+      "title": "Trigger: cache expiry",
+      "description": "Warn before the prompt cache expires.",
+      "default": true
+    },
+    "headsup_trigger_longCommand": {
+      "type": "boolean",
+      "title": "Trigger: long command",
+      "description": "Long Command Timer.",
+      "default": true
+    },
+    "headsup_trigger_context": {
+      "type": "boolean",
+      "title": "Trigger: context",
+      "description": "Warn when the context window is nearly full.",
+      "default": true
+    },
+    "headsup_trigger_pace": {
+      "type": "boolean",
+      "title": "Trigger: usage pace",
+      "description": "Warn when the weekly pace turns HOT.",
+      "default": true
+    },
+    "headsup_trigger_bigOutput": {
+      "type": "boolean",
+      "title": "Trigger: big output",
+      "description": "Warn about a very large tool result.",
+      "default": true
+    },
+    "headsup_trigger_ollama": {
+      "type": "boolean",
+      "title": "Trigger: Ollama down",
+      "description": "Warn when the local Ollama is down (needs OBSIDIAN_VAULT_PATH).",
+      "default": true
+    },
+    "headsup_trigger_noModel": {
+      "type": "boolean",
+      "title": "Trigger: agent without model",
+      "description": "Off by default: Delegation Guard owns this toast.",
+      "default": false
+    },
+    "headsup_cache_warnSec": {
+      "type": "number",
+      "title": "Cache warning (s)",
+      "description": "Warn when this many seconds of cache remain.",
+      "default": 60
+    },
+    "headsup_cache_minCtxTokens": {
+      "type": "number",
+      "title": "Cache min context (tokens)",
+      "description": "No cache warning below this context size.",
+      "default": 50000
+    },
+    "cache_ttl": {
+      "type": "string",
+      "title": "Cache TTL",
+      "description": "auto learns the TTL; 5m or 1h fixes it.",
+      "default": "auto",
+      "options": [
+        "auto",
+        "5m",
+        "1h"
+      ]
+    },
+    "cache_followCacheTax": {
+      "type": "boolean",
+      "title": "Follow cache-tax TTL",
+      "description": "Use the cache-tax plugin's TTL when it is installed.",
+      "default": true
+    },
+    "headsup_longSec": {
+      "type": "number",
+      "title": "Long command (s)",
+      "description": "A foreground command running this long raises a toast.",
+      "default": 120
+    },
+    "headsup_context_warnAt": {
+      "type": "number",
+      "title": "Context warning (%)",
+      "description": "Warn when context use crosses this percent.",
+      "default": 80
+    },
+    "headsup_pace_five": {
+      "type": "boolean",
+      "title": "Pace: 5-hour window",
+      "description": "Also warn about the 5-hour window.",
+      "default": false
+    },
+    "headsup_bigOutput_kb": {
+      "type": "number",
+      "title": "Big output (KB)",
+      "description": "Decimal KB of one tool result.",
+      "default": 100
+    },
+    "headsup_ollama_intervalMin": {
+      "type": "number",
+      "title": "Ollama check (min)",
+      "description": "Minutes between probes.",
+      "default": 5
+    },
+    "headsup_noModel_allowTypes": {
+      "type": "string",
+      "title": "No-model allowed types",
+      "description": "Comma-separated globs of agent types that need no model.",
+      "default": "savvy-*,*:savvy-*"
+    },
+    "nowdoing_mascot": {
+      "type": "boolean",
+      "title": "Now Doing mascot",
+      "description": "Show Pom (20 px) in the Now Doing segment.",
+      "default": false
+    },
+    "nowdoing_showAfterSec": {
+      "type": "number",
+      "title": "Show command timer after (s)",
+      "description": "A running command shows in the band after this long.",
+      "default": 10
+    },
+    "nowdoing_tool": {
+      "type": "boolean",
+      "title": "Phase tool",
+      "description": "Register mcp__awareness__phase so the model can set the phase and a note.",
+      "default": true
+    },
+    "nowdoing_phaseMap": {
+      "type": "string",
+      "title": "Extra tool phases",
+      "description": "JSON object mapping tool names to research, plan, build, verify or report.",
+      "default": ""
+    },
+    "spec_enabled": {
+      "type": "boolean",
+      "title": "Spec Tracker on",
+      "description": "Same switch as mod.spec.enabled.",
+      "default": true
+    },
+    "spec_globs": {
+      "type": "string",
+      "title": "Spec file globs",
+      "description": "Comma-separated globs of plan and spec files to auto-discover.",
+      "default": "**/docs/**/*plan*.md,**/docs/**/*spec*.md,**/plans/**/*.md,**/specs/**/*.md,**/PLAN.md,**/SPEC.md,**/.claude/plans/**/*.md"
+    },
+    "spec_nested": {
+      "type": "string",
+      "title": "Nested checkboxes",
+      "description": "all counts nested items; top counts top-level only.",
+      "default": "all",
+      "options": [
+        "all",
+        "top"
+      ]
+    },
+    "spec_maxKb": {
+      "type": "number",
+      "title": "Spec max size (KB)",
+      "description": "Larger files are not parsed.",
+      "default": 256
+    },
+    "spec_auto": {
+      "type": "boolean",
+      "title": "Spec auto-discovery",
+      "description": "Off means pin-only (/spec <path>).",
+      "default": true
+    },
+    "focus_focusMin": {
+      "type": "number",
+      "title": "Focus (min)",
+      "description": "Length of a focus block.",
+      "default": 25
+    },
+    "focus_breakMin": {
+      "type": "number",
+      "title": "Break (min)",
+      "description": "Short break.",
+      "default": 5
+    },
+    "focus_longBreakMin": {
+      "type": "number",
+      "title": "Long break (min)",
+      "description": "Break after every Nth block.",
+      "default": 15
+    },
+    "focus_longEvery": {
+      "type": "number",
+      "title": "Long break every",
+      "description": "Blocks before a long break.",
+      "default": 4
+    },
+    "focus_sound": {
+      "type": "string",
+      "title": "Sound",
+      "description": "chime plays a short tone when a block ends (macOS).",
+      "default": "chime",
+      "options": [
+        "chime",
+        "off"
+      ]
+    },
+    "focus_notify": {
+      "type": "boolean",
+      "title": "Notify",
+      "description": "Native notification when a block ends.",
+      "default": true
+    },
+    "focus_autoBreak": {
+      "type": "boolean",
+      "title": "Auto break",
+      "description": "Start the break when a block ends.",
+      "default": true
+    }
+  }
+}

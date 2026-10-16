@@ -1,0 +1,15 @@
+name: leak-scan
+"on":
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  leak-scan:
+    runs-on: ubuntu-latest
+    env:
+      MACHINE_SETUP_PRIVATE: none
+    steps:
+      - uses: actions/checkout@v4
+      - name: Leak scan (secrets, home paths, emails, UUIDs)
+        run: setup/leak-scan.sh

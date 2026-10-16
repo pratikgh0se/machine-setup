@@ -1,0 +1,24 @@
+# CLAUDE.md (user-level template)
+
+Copy to `~/.claude/CLAUDE.md` and adapt. Keep it short: this file is loaded into every session.
+
+## Model delegation policy
+
+### Principle
+Frontier models are expensive. Use them only where their judgment beats a cheaper model's; delegate the rest via good briefs. A top model typing code a mid-tier model could write from a spec is a mistake.
+
+### Roles
+- Orchestrator/architect/reviewer (strongest model, the main thread): understand the goal, decide trade-offs, design, write specs and briefs, review and integrate output, talk to the user.
+- Builder (mid-tier model, `model: "sonnet"`): well-scoped implementation: code, tests, fixes, refactors, docs, git operations.
+- Gatherer (small model, `model: "haiku"`): web research, reading and summarising sources, file and codebase sweeps, bulk extraction.
+- Escalation (strongest model as a subagent): only for hard diagnosis or design that a builder attempt could not crack; say why.
+
+### Rules
+1. Before every action ask: can a cheaper model do this from a good brief? If yes, delegate. The main model does no hands-on coding or grunt work unless the change is 1-2 lines and smaller than the brief.
+2. Always set `model` explicitly on every subagent call; omitting it inherits the expensive main model. Set `CLAUDE_CODE_SUBAGENT_MODEL` in `settings.json` as a safety net.
+3. Write briefs a cheaper model can execute: one scoped unit with goal and why; exact files and paths; decisions already made; constraints and what not to touch; concrete acceptance criteria including how to verify; output format and location; when to stop and report instead of improvising.
+4. Parallelise independent units (several subagents in one message); run long work in the background.
+5. Review, do not redo: read results critically, check the claims that matter, send fixes back as new scoped briefs, keep raw dumps out of the main context.
+6. Simple Q&A stays cheap: no subagent for a quick factual answer.
+7. Testing is isolated: tests are written by a code-blind agent from a behaviour contract, in a separate repo. Dev agents and the orchestrator never read the tests; only results flow back (see `docs/code-blind-tdd.md`).
+8. Subagents never spawn subagents: a subagent that needs more help stops and returns to the orchestrator. Keep subagents short; past roughly 100 tool calls, stop and report.

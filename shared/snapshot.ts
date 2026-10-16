@@ -1,0 +1,132 @@
+// Working-tree snapshots through a temporary git index (safety.md s2 steps 1-4; dev.md Session Diff).
+// Never touches HEAD, the branch, the real index, the stash or any file. Needs a Runner from proc.ts.
+import type { Runner } from './proc'
+
+export type RepoPaths = { top: string; idx: string; tmp: string; lock: string }
+
+export const DEFAULT_EXCLUDE = ['.env*', '*.pem', '*.key', '*.p12', 'id_rsa*', '*.sqlite', '*.kdbx']
+
+/** `S8` = first 8 chars of the session id reduced to [A-Za-z0-9_-]. */
+export const sid8 = (sessionId: string): string => sessionId.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 8)
+
+/** Step 1: TOP, real index, temp index (`claude-<name>-S8.index`), index.lock. undefined = not a repo / bare. */
+export async function repoPaths(run: Runner, o: { cwd?: string; name: string; sid: string }): Promise<RepoPaths | undefined> {
+  const tmpName = `claude-${o.name}-${sid8(o.sid)}.index`
+  const r = await run(['git', 'rev-parse', '--path-format=absolute', '--show-toplevel', '--git-path', 'index', '--git-path', tmpName, '--git-path', 'index.lock'], { cwd: o.cwd })
+  if (!r.ok || r.exitCode !== 0) return undefined
+  const [top, idx, tmp, lock] = r.stdout.split('\n').map(s => s.trim())
+  return top && idx && tmp && lock ? { top, idx, tmp, lock } : undefined
+}
+
+export type SnapshotResult = { ok: true; tree: string; paths: RepoPaths } | { ok: false; reason: string; locked?: boolean }
+
+/**
+ * Steps 2-4: copy the real index to the temp index, `git add -A` with exclude pathspecs under
+ * `GIT_INDEX_FILE=tmp`, `git write-tree`. Retries once from `read-tree HEAD` on an index error.
+ * `exists(path)` tells whether a path exists (index.lock check). The temp index is removed at the end.
+ */
+export async function snapshotTree(
+  run: Runner,
+  o: { cwd?: string; name: string; sid: string; exclude?: readonly string[]; exists?: (p: string) => Promise<boolean>; paths?: RepoPaths },
+): Promise<SnapshotResult> {
+  const paths = o.paths ?? (await repoPaths(run, o))
+  if (!paths) return { ok: false, reason: 'not a repo' }
+  if (o.exists && (await o.exists(paths.lock))) return { ok: false, reason: 'git busy', locked: true }
+  const env = { GIT_INDEX_FILE: paths.tmp }
+  const opts = { cwd: paths.top, env, timeoutMs: 20_000 }
+  const spec = [
+    '--', '.',
+    ...(o.exclude ?? DEFAULT_EXCLUDE).map(g => `:(exclude,glob)**/${g}`),
+  ]
+  const cleanup = (): Promise<unknown> => run(['rm', '-f', paths.tmp], { cwd: paths.top })
+  try {
+    let have = (await run(['cp', '-p', paths.idx, paths.tmp], { cwd: paths.top }))
+    if (!have.ok || have.exitCode !== 0) {
+      const rt = await run(['git', 'read-tree', 'HEAD'], opts)
+      if (!rt.ok || rt.exitCode !== 0) await run(['git', 'read-tree', '--empty'], opts)
+    }
+    let add = await run(['git', 'add', '-A', ...spec], opts)
+    if (!add.ok || add.exitCode !== 0) {
+      await run(['git', 'read-tree', 'HEAD'], opts)
+      add = await run(['git', 'add', '-A', ...spec], opts)
+      if (!add.ok || add.exitCode !== 0) return { ok: false, reason: add.ok ? 'git add failed' : add.reason }
+    }
+    const wt = await run(['git', 'write-tree'], opts)
+    if (!wt.ok || wt.exitCode !== 0 || !wt.stdout.trim()) return { ok: false, reason: wt.ok ? 'write-tree failed' : wt.reason }
+    return { ok: true, tree: wt.stdout.trim(), paths }
+  } finally {
+    await cleanup()
+  }
+}
+
+/** Step 5 helper: tree of a ref (`refs/checkpoints/SID`) or undefined. */
+export async function refTree(run: Runner, ref: string, cwd?: string): Promise<string | undefined> {
+  const r = await run(['git', 'rev-parse', '-q', '--verify', `${ref}^{tree}`], { cwd })
+  return r.ok && r.exitCode === 0 && r.stdout.trim() ? r.stdout.trim() : undefined
+}
+
+const CKPT_ENV = {
+  GIT_AUTHOR_NAME: 'claude-checkpoint', GIT_AUTHOR_EMAIL: 'checkpoint@localhost',
+  GIT_COMMITTER_NAME: 'claude-checkpoint', GIT_COMMITTER_EMAIL: 'checkpoint@localhost',
+}
+/** Steps 6-7: commit-tree (parent = current ref commit, else HEAD, else none) then update-ref with the old value. Returns the commit. */
+export async function commitCheckpoint(run: Runner, o: { cwd?: string; tree: string; ref: string; message: string }): Promise<{ ok: true; commit: string } | { ok: false; reason: string }> {
+  const cur = await run(['git', 'rev-parse', '-q', '--verify', o.ref], { cwd: o.cwd })
+  const old = cur.ok && cur.exitCode === 0 ? cur.stdout.trim() : ''
+  let parent = old
+  if (!parent) {
+    const head = await run(['git', 'rev-parse', '-q', '--verify', 'HEAD'], { cwd: o.cwd })
+    parent = head.ok && head.exitCode === 0 ? head.stdout.trim() : ''
+  }
+  const c = await run(['git', 'commit-tree', o.tree, ...(parent ? ['-p', parent] : []), '-m', o.message], { cwd: o.cwd, env: CKPT_ENV })
+  if (!c.ok || c.exitCode !== 0 || !c.stdout.trim()) return { ok: false, reason: c.ok ? 'commit-tree failed' : c.reason }
+  const commit = c.stdout.trim()
+  const u = await run(['git', 'update-ref', '-m', 'claude checkpoint', o.ref, commit, ...(old ? [old] : [])], { cwd: o.cwd })
+  if (!u.ok || u.exitCode !== 0) return { ok: false, reason: u.ok ? 'update-ref failed' : u.reason }
+  return { ok: true, commit }
+}
+
+// --- tree-to-tree diff ---------------------------------------------------------
+export type DiffRow = { path: string; status: 'A' | 'M' | 'D' | 'R'; add: number; del: number; bin?: boolean }
+
+/** `git diff --numstat -z A B` -> path -> {add, del, bin}. Renames come as `add\tdel\t\0old\0new\0`. */
+export function parseNumstatZ(out: string): Map<string, { add: number; del: number; bin?: boolean }> {
+  const m = new Map<string, { add: number; del: number; bin?: boolean }>()
+  const parts = out.split('\0')
+  for (let i = 0; i < parts.length; i++) {
+    const p = parts[i] as string
+    if (!p) continue
+    const t = /^(\d+|-)\t(\d+|-)\t(.*)$/.exec(p)
+    if (!t) continue
+    let path = t[3] as string
+    if (path === '') { path = parts[i + 2] as string; i += 2 }
+    const bin = t[1] === '-'
+    m.set(path, { add: bin ? 0 : parseInt(t[1] as string, 10), del: bin ? 0 : parseInt(t[2] as string, 10), bin: bin || undefined })
+  }
+  return m
+}
+/** `git diff --name-status -z A B` -> path -> status (renames map the NEW path to 'R'). */
+export function parseNameStatusZ(out: string): Map<string, 'A' | 'M' | 'D' | 'R'> {
+  const m = new Map<string, 'A' | 'M' | 'D' | 'R'>()
+  const parts = out.split('\0')
+  for (let i = 0; i < parts.length; i++) {
+    const s = parts[i] as string
+    if (!s) continue
+    const c = s.charAt(0)
+    if (c === 'R' || c === 'C') { m.set(parts[i + 2] as string, 'R'); i += 2 }
+    else { m.set(parts[i + 1] as string, c === 'A' ? 'A' : c === 'D' ? 'D' : 'M'); i += 1 }
+  }
+  return m
+}
+
+/** Diff two trees: rows sorted by churn (add + del) descending. */
+export async function diffTrees(run: Runner, base: string, cur: string, cwd?: string): Promise<{ ok: true; rows: DiffRow[] } | { ok: false; reason: string }> {
+  const [ns, st] = await Promise.all([run(['git', 'diff', '--numstat', '-z', base, cur], { cwd }), run(['git', 'diff', '--name-status', '-z', base, cur], { cwd })])
+  if (!ns.ok || ns.exitCode !== 0) return { ok: false, reason: ns.ok ? 'diff failed' : ns.reason }
+  if (!st.ok || st.exitCode !== 0) return { ok: false, reason: st.ok ? 'diff failed' : st.reason }
+  const nums = parseNumstatZ(ns.stdout)
+  const status = parseNameStatusZ(st.stdout)
+  const rows: DiffRow[] = [...nums].map(([path, n]) => ({ path, status: status.get(path) ?? 'M', add: n.add, del: n.del, bin: n.bin }))
+  rows.sort((a, b) => b.add + b.del - (a.add + a.del))
+  return { ok: true, rows }
+}

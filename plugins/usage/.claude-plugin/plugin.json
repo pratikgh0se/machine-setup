@@ -1,0 +1,186 @@
+{
+  "name": "usage",
+  "version": "1.0.5",
+  "description": "Burn Meter (5-hour and weekly limits with pace), Cache Clock (prompt-cache countdown and cold-return cost) and Compaction Alert, in one band row. Spends no tokens.",
+  "types": "./types/index.d.ts",
+  "author": {
+    "name": "Pratik Ghose",
+    "url": "https://github.com/pratikgh0se"
+  },
+  "userConfig": {
+    "mod_burn_enabled": {
+      "type": "boolean",
+      "title": "Burn Meter",
+      "description": "Show the 5-hour and weekly limits with pace and forecast",
+      "default": true
+    },
+    "mod_cache_enabled": {
+      "type": "boolean",
+      "title": "Cache Clock",
+      "description": "Show the prompt-cache countdown, the cold-return cost and the pane",
+      "default": true
+    },
+    "mod_compaction_enabled": {
+      "type": "boolean",
+      "title": "Compaction Alert",
+      "description": "Show how close the context is to auto-compact",
+      "default": true
+    },
+    "minBandRows": {
+      "type": "number",
+      "title": "Minimum band rows",
+      "description": "Below this many free rows the usage row stays silent",
+      "default": 4
+    },
+    "mascots": {
+      "type": "string",
+      "title": "Mascot images",
+      "description": "auto and on draw the Carrot and Pom stills; off draws the block mark instead",
+      "default": "auto",
+      "options": [
+        "auto",
+        "on",
+        "off"
+      ]
+    },
+    "pricesJson": {
+      "type": "string",
+      "title": "Price overrides (JSON)",
+      "description": "Optional JSON replacing price rows by family, e.g. {\"asOf\":\"2026-10-12\",\"sonnet\":{\"input\":2,\"cacheRead\":0.1,\"write5m\":2.5,\"write1h\":4}}. Empty uses the built-in table",
+      "default": ""
+    },
+    "burn_hotAt": {
+      "type": "number",
+      "title": "Hot at (projected %)",
+      "description": "A window is HOT when its projected use at reset reaches this percent",
+      "default": 100
+    },
+    "burn_plentyBelow": {
+      "type": "number",
+      "title": "Plenty below (projected %)",
+      "description": "A window is PLENTY when its projected use at reset is below this percent",
+      "default": 60
+    },
+    "burn_recentWindowMin": {
+      "type": "number",
+      "title": "Recent-rate window (min)",
+      "description": "Minutes of samples behind the 5-hour recent rate",
+      "default": 60
+    },
+    "burn_minElapsedFiveMin": {
+      "type": "number",
+      "title": "5H learning time (min)",
+      "description": "Minutes of the 5-hour window before a pace is shown",
+      "default": 10
+    },
+    "burn_minElapsedSevenHr": {
+      "type": "number",
+      "title": "7D learning time (h)",
+      "description": "Hours of the weekly window before a pace is shown",
+      "default": 3
+    },
+    "burn_showSpend": {
+      "type": "boolean",
+      "title": "Show spend limit",
+      "description": "Show a third meter for a gateway spend limit",
+      "default": true
+    },
+    "burn_bites": {
+      "type": "boolean",
+      "title": "Carrot bites",
+      "description": "Nibble the Carrot as the weekly limit fills",
+      "default": true
+    },
+    "burn_staleMin": {
+      "type": "number",
+      "title": "Stale after (min)",
+      "description": "Dim the meter when no reading arrived for this long",
+      "default": 30
+    },
+    "cache_ttl": {
+      "type": "string",
+      "title": "Cache TTL",
+      "description": "auto follows events, learning, cache-tax and a subscription guess; or fix 5m or 1h",
+      "default": "auto",
+      "options": [
+        "auto",
+        "5m",
+        "1h"
+      ]
+    },
+    "cache_followCacheTax": {
+      "type": "boolean",
+      "title": "Follow cache-tax",
+      "description": "Use cache-tax's TTL when it is installed and no better source exists",
+      "default": true
+    },
+    "cache_keepwarmLine": {
+      "type": "boolean",
+      "title": "Keepwarm line",
+      "description": "Show the cache-tax keepwarm status in the pane",
+      "default": true
+    },
+    "cache_expiringSec": {
+      "type": "number",
+      "title": "Expiring at (s)",
+      "description": "Warn colour when the cache has this many seconds left",
+      "default": 300
+    },
+    "cache_assumeSubscriptionTtl": {
+      "type": "string",
+      "title": "Assumed TTL, subscription",
+      "description": "TTL assumed on a plan with rate limits when nothing else is known",
+      "default": "1h",
+      "options": [
+        "5m",
+        "1h"
+      ]
+    },
+    "cache_assumeApiTtl": {
+      "type": "string",
+      "title": "Assumed TTL, API",
+      "description": "TTL assumed without rate limits when nothing else is known",
+      "default": "5m",
+      "options": [
+        "5m",
+        "1h"
+      ]
+    },
+    "cache_showSavings": {
+      "type": "boolean",
+      "title": "Show savings",
+      "description": "Show what the cache saved today",
+      "default": true
+    },
+    "cache_pane_autoOpen": {
+      "type": "boolean",
+      "title": "Open pane at first request",
+      "description": "Open the cache-clock pane once per session at the first request",
+      "default": false
+    },
+    "compaction_showFrom": {
+      "type": "number",
+      "title": "Show from (%)",
+      "description": "Show the context chip from this fill",
+      "default": 60
+    },
+    "compaction_warnAt": {
+      "type": "number",
+      "title": "Warn at (%)",
+      "description": "Warn colour from this fill",
+      "default": 80
+    },
+    "compaction_dangerAt": {
+      "type": "number",
+      "title": "Danger at (%)",
+      "description": "Danger colour from this fill",
+      "default": 90
+    },
+    "compaction_showCount": {
+      "type": "boolean",
+      "title": "Show compaction count",
+      "description": "Append the number of compactions this session",
+      "default": true
+    }
+  }
+}

@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Blocks commits if the leak scan (secret rules + personal-value rules) fails on the staged files.
+# Enable: git config core.hooksPath setup/githooks
+ROOT="$(git rev-parse --show-toplevel)"
+exec "$ROOT/setup/leak-scan.sh" --staged

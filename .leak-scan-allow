@@ -1,0 +1,5 @@
+# Reviewed false positives. Format: path-glob<TAB>rule<TAB>regex (regex must match the offending text itself).
+# Public file: never put private strings here. Denylist hits can only be allowed from the overlay leak-allow.txt.
+specs/machine-setup-spec.md	home-path	^([/]Users[/](<anything>|someone|zed)[/]|[/]home[/](<anything>|zed)[/]|C:\\Users\\(<anything>|zed)\\)$
+specs/machine-setup-spec.md	email	^(local@domain\.tld|a@corp\.org)$
+plugins/dev/tests/spec.test.ts	email	^git@github\.com$

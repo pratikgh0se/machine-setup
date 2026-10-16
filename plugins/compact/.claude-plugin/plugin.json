@@ -1,0 +1,162 @@
+{
+  "name": "compact",
+  "version": "1.0.7",
+  "description": "Compact Coach, /handoff, Resume loader and Orchestrator mode: compact at the right moment and keep the thread across it",
+  "types": "./types/index.d.ts",
+  "author": {
+    "name": "Pratik Ghose",
+    "url": "https://github.com/pratikgh0se"
+  },
+  "userConfig": {
+    "mod_coach_enabled": {
+      "type": "boolean",
+      "title": "Compact Coach",
+      "description": "Show the compaction cost chip and toast",
+      "default": true
+    },
+    "mod_handoff_enabled": {
+      "type": "boolean",
+      "title": "/handoff",
+      "description": "Enable the /handoff command",
+      "default": true
+    },
+    "mod_resume_enabled": {
+      "type": "boolean",
+      "title": "Resume loader",
+      "description": "Remind the model to read the handoff after compaction",
+      "default": true
+    },
+    "mod_orch_enabled": {
+      "type": "boolean",
+      "title": "Orchestrator mode",
+      "description": "Enable /orch and the orchestrator prompt section",
+      "default": true
+    },
+    "mod_nudge_enabled": {
+      "type": "boolean",
+      "title": "Handoff nudge",
+      "description": "Remind the working model to write its own handoff before compaction (one short note, no extra turn)",
+      "default": true
+    },
+    "coach_showFromTokens": {
+      "type": "number",
+      "title": "Show Coach from (tokens)",
+      "description": "Context size from which the chip shows",
+      "default": 100000
+    },
+    "coach_targetTokens": {
+      "type": "number",
+      "title": "Compaction target (tokens)",
+      "description": "Wanted size after compaction; the measured floor wins if higher",
+      "default": 40000
+    },
+    "coach_summaryOutTokens": {
+      "type": "number",
+      "title": "Summary output (tokens)",
+      "description": "Expected size of the compaction summary",
+      "default": 4000
+    },
+    "coach_handoffOutTokens": {
+      "type": "number",
+      "title": "Handoff output (tokens)",
+      "description": "Expected size of the handoff file the model writes",
+      "default": 3000
+    },
+    "coach_minSavingUsd": {
+      "type": "number",
+      "title": "Minimum saving per turn (USD)",
+      "description": "Below this saving per warm turn the verdict is NOT NOW",
+      "default": 0.02
+    },
+    "coach_strongAt": {
+      "type": "number",
+      "title": "Strong moment score",
+      "description": "Score from which the verdict is GOOD MOMENT",
+      "default": 5
+    },
+    "coach_idleReturnMin": {
+      "type": "number",
+      "title": "Idle return (minutes)",
+      "description": "A turn starting after this gap scores +1",
+      "default": 10
+    },
+    "coach_toast": {
+      "type": "boolean",
+      "title": "Coach toast",
+      "description": "Raise one toast per strong moment",
+      "default": true
+    },
+    "coach_toastMinGapMin": {
+      "type": "number",
+      "title": "Toast gap (minutes)",
+      "description": "Minimum minutes between Coach toasts",
+      "default": 20
+    },
+    "coach_passAssumesCacheHit": {
+      "type": "boolean",
+      "title": "Compaction pass hits warm cache",
+      "description": "Price the compaction pass at cache-read rates when the cache is warm (set false if a real compaction shows otherwise)",
+      "default": true
+    },
+    "pricesJson": {
+      "type": "string",
+      "title": "Prices override (JSON)",
+      "description": "Optional per-family price overrides, USD per MTok; empty keeps the built-in table",
+      "default": ""
+    },
+    "cache_expiringSec": {
+      "type": "number",
+      "title": "Cache expiring (seconds)",
+      "description": "Seconds before expiry from which the cache counts as expiring",
+      "default": 300
+    },
+    "handoff_minBytes": {
+      "type": "number",
+      "title": "Handoff minimum size (bytes)",
+      "description": "Smaller handoff files are rejected",
+      "default": 800
+    },
+    "handoff_confirmTtlMin": {
+      "type": "number",
+      "title": "Confirm window (minutes)",
+      "description": "How long /handoff go stays available after the file is ready",
+      "default": 30
+    },
+    "handoff_resumeMaxAgeMin": {
+      "type": "number",
+      "title": "Resume window (minutes)",
+      "description": "A handoff saved longer ago than this is not used to resume",
+      "default": 240
+    },
+    "nudge_atPercent": {
+      "type": "number",
+      "title": "Nudge from (% of window)",
+      "description": "First nudge at this percent of the auto-compact window (10 to 95)",
+      "default": 75
+    },
+    "nudge_everyTokens": {
+      "type": "number",
+      "title": "Nudge again every (tokens)",
+      "description": "Another nudge each time context grows by this much (minimum 10000)",
+      "default": 50000
+    },
+    "orch_enabled": {
+      "type": "boolean",
+      "title": "Orchestrator default",
+      "description": "First-run default for Orchestrator mode; /orch overrides it once used",
+      "default": true
+    },
+    "minBandRows": {
+      "type": "number",
+      "title": "Minimum band rows",
+      "description": "The band stays silent when fewer rows are free",
+      "default": 4
+    },
+    "windowsJson": {
+      "type": "string",
+      "title": "Context windows override",
+      "description": "JSON {\"asOf\":\"YYYY-MM-DD\",\"sonnet\":200000,\"opus\":1000000} tokens per family (or a model-id substring). Empty = built-in table.",
+      "default": ""
+    }
+  }
+}

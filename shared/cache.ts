@@ -1,0 +1,107 @@
+// Prompt-cache logic shared by usage (Cache Clock) and awareness (Heads-Up). Pure.
+// Spec: usage.md s2. Times are epoch ms.
+
+export type Ttl = '5m' | '1h'
+export type TtlSource = 'option' | 'event' | 'learned' | 'cache-tax' | 'settings' | 'assumed'
+export type CacheState = 'unknown' | 'warm' | 'expiring' | 'cold'
+export const ttlMs = (t: Ttl): number => (t === '1h' ? 3600_000 : 300_000)
+
+/** Minimal slice of `$.settings.read()` this file needs. */
+export type SettingsSlice = {
+  enabledPlugins?: Record<string, unknown>
+  pluginConfigs?: Record<string, { options?: Record<string, unknown> } | undefined>
+  promptCacheTtl?: unknown
+}
+
+/** cache-tax key in enabledPlugins (`cache-tax@<marketplace>`) set to true. Re-read at session.start and config.set. */
+export function cacheTaxKey(s: SettingsSlice | undefined): string | undefined {
+  const ep = s?.enabledPlugins
+  if (!ep) return undefined
+  return Object.keys(ep).find(k => k.startsWith('cache-tax@') && ep[k] === true)
+}
+/** TTL cache-tax uses: `pluginConfigs[key].options.ttl|promptCacheTtl` if `5m|1h`, else its 1 h constant. undefined = not installed. */
+export function cacheTaxTtl(s: SettingsSlice | undefined): Ttl | undefined {
+  const k = cacheTaxKey(s)
+  if (!k) return undefined
+  const o = s?.pluginConfigs?.[k]?.options
+  for (const f of ['ttl', 'promptCacheTtl']) if (o?.[f] === '5m' || o?.[f] === '1h') return o[f] as Ttl
+  return '1h'
+}
+
+export type TtlInputs = {
+  option?: 'auto' | Ttl
+  /** Last `cache_ttl` from a model-switch event. */
+  event?: Ttl
+  learned?: { ttl: Ttl; at: number }
+  followCacheTax?: boolean
+  settings?: SettingsSlice
+  hasRateLimits?: boolean
+  assumeSubscription?: Ttl // 1h
+  assumeApi?: Ttl // 5m
+  now: number
+}
+export type TtlResolved = { ttl: Ttl; source: TtlSource; approx: boolean; cacheTaxTtl?: Ttl }
+const WEEK = 7 * 86400_000
+
+/** Order: option, event, learned (< 7 d), cache-tax, settings.promptCacheTtl, assumed. Learned/assumed render with `~`. */
+export function resolveTtl(i: TtlInputs): TtlResolved {
+  const tax = cacheTaxTtl(i.settings)
+  const withTax = (r: Omit<TtlResolved, 'cacheTaxTtl'>): TtlResolved => ({ ...r, cacheTaxTtl: tax })
+  if (i.option === '5m' || i.option === '1h') return withTax({ ttl: i.option, source: 'option', approx: false })
+  if (i.event) return withTax({ ttl: i.event, source: 'event', approx: false })
+  if (i.learned && i.now - i.learned.at <= WEEK) return withTax({ ttl: i.learned.ttl, source: 'learned', approx: true })
+  if (i.followCacheTax !== false && tax) return withTax({ ttl: tax, source: 'cache-tax', approx: false })
+  const st = i.settings?.promptCacheTtl
+  if (st === '5m' || st === '1h') return withTax({ ttl: st, source: 'settings', approx: false })
+  const ttl = i.hasRateLimits ? (i.assumeSubscription ?? '1h') : (i.assumeApi ?? '5m')
+  return withTax({ ttl, source: 'assumed', approx: true })
+}
+
+/** Pane TTL line: `TTL 1h (cache-tax)`, `TTL ~1h (learned)`, `TTL ~5m (assumed)`. */
+export const ttlLine = (r: TtlResolved): string =>
+  `TTL ${r.approx ? '~' : ''}${r.ttl}${r.source === 'option' ? '' : ` (${r.source})`}`
+/** Extra pane line when a higher-priority source contradicts cache-tax. */
+export const cacheTaxDisagrees = (r: TtlResolved): string | undefined =>
+  r.cacheTaxTtl && r.cacheTaxTtl !== r.ttl && (r.source === 'event' || r.source === 'learned') ? `cache-tax assumes ${r.cacheTaxTtl}` : undefined
+
+export type CacheClock = { state: CacheState; expiresAt?: number; remainingMs?: number }
+/** `lastReqAt` undefined = UNKNOWN; `forcedCold` after compact/model switch/clear until the next main request. */
+export function cacheClock(a: { lastReqAt?: number; ttl: Ttl; now: number; expiringSec?: number; forcedCold?: boolean }): CacheClock {
+  if (a.forcedCold) return { state: 'cold' }
+  if (a.lastReqAt == null) return { state: 'unknown' }
+  const expiresAt = a.lastReqAt + ttlMs(a.ttl)
+  const remainingMs = expiresAt - a.now
+  if (remainingMs <= 0) return { state: 'cold', expiresAt, remainingMs: 0 }
+  return { state: remainingMs <= (a.expiringSec ?? 300) * 1000 ? 'expiring' : 'warm', expiresAt, remainingMs }
+}
+
+/** Tick period (ms) for a visible countdown: 1 s under 120 s, 5 s under 10 min, else 30 s (conventions s8.4). */
+export const tickMs = (remainingMs: number): number => (remainingMs <= 120_000 ? 1000 : remainingMs < 600_000 ? 5000 : 30_000)
+
+/**
+ * Learning rule. gap g = start(n) - start(n-1); P = previous input total (read + creation + input).
+ * g > 5m30s and read >= 0.8P -> '1h'; g > 5m and creation >= 0.5P and read < 0.2P -> '5m' if g <= 65 min else '1h'.
+ */
+export function learnTtl(a: { gapMs: number; prevInputTotal: number; cacheRead: number; cacheCreation: number }): Ttl | undefined {
+  const P = a.prevInputTotal
+  if (P <= 0) return undefined
+  if (a.gapMs > 330_000 && a.cacheRead >= 0.8 * P) return '1h'
+  if (a.gapMs > 300_000 && a.cacheCreation >= 0.5 * P && a.cacheRead < 0.2 * P) return a.gapMs <= 65 * 60_000 ? '5m' : '1h'
+  return undefined
+}
+
+/** Hit ratio of the last `n` requests: sum(read) / sum(read + creation + input). undefined with no data. */
+export function hitRatio(reqs: readonly { read: number; creation: number; input: number }[], n = 20): number | undefined {
+  const s = reqs.slice(-n)
+  let r = 0, t = 0
+  for (const x of s) { r += x.read; t += x.read + x.creation + x.input }
+  return t > 0 ? r / t : undefined
+}
+
+/** Keepwarm pane line from derived fields only. */
+export function keepwarmLine(k: { state: 'on' | 'off' | 'unknown'; untilAt?: number; lastPingAt?: number } | undefined, now: number, fmtTime: (ts: number) => string): string {
+  if (!k || k.state === 'unknown') return 'KEEPWARM unknown'
+  if (k.state === 'off') return 'KEEPWARM off'
+  const mins = k.lastPingAt != null ? Math.max(0, Math.round((now - k.lastPingAt) / 60_000)) : undefined
+  return `KEEPWARM on${k.untilAt != null ? ` · until ${fmtTime(k.untilAt)}` : ''}${mins != null ? ` · last ping ${mins} min ago` : ''}`
+}

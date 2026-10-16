@@ -1,0 +1,131 @@
+{
+  "name": "safety",
+  "version": "1.0.3",
+  "description": "Protected Files (deny writes to .env, lockfiles, vault files) and Auto-checkpoint (side-ref snapshots of the working tree). Spends no tokens.",
+  "types": "./types/index.d.ts",
+  "author": {
+    "name": "Pratik Ghose",
+    "url": "https://github.com/pratikgh0se"
+  },
+  "userConfig": {
+    "mod_protect_enabled": {
+      "type": "boolean",
+      "title": "Protected Files",
+      "description": "Enable the protect mod (gates writes to protected paths).",
+      "default": true
+    },
+    "mod_checkpoint_enabled": {
+      "type": "boolean",
+      "title": "Auto-checkpoint",
+      "description": "Enable the checkpoint mod (side-ref snapshots of the working tree).",
+      "default": true
+    },
+    "protect_mode": {
+      "type": "string",
+      "title": "Protect mode",
+      "description": "deny blocks the write, warn only shows a toast, off disables.",
+      "default": "deny",
+      "options": [
+        "deny",
+        "warn",
+        "off"
+      ]
+    },
+    "protect_group_env": {
+      "type": "boolean",
+      "title": "Protect .env files",
+      "description": "Protect .env and .env.* (except example/sample/template).",
+      "default": true
+    },
+    "protect_group_lockfiles": {
+      "type": "boolean",
+      "title": "Protect lockfiles",
+      "description": "Protect package-lock.json, yarn.lock, pnpm-lock.yaml, bun.lock, bun.lockb, Cargo.lock, poetry.lock, uv.lock.",
+      "default": true
+    },
+    "protect_group_vault": {
+      "type": "boolean",
+      "title": "Protect vault files",
+      "description": "Protect the Obsidian vault's Boards/Engineering.md, .obsidian/** and Ledger/**.",
+      "default": true
+    },
+    "protect_globs": {
+      "type": "string",
+      "title": "Extra protected globs",
+      "description": "Comma list of globs (*, **, ?), absolute, ~ or repo-relative.",
+      "default": ""
+    },
+    "protect_allow": {
+      "type": "string",
+      "title": "Env exceptions",
+      "description": "Comma list of basename globs never treated as secrets.",
+      "default": ".env.example,.env.sample,.env.template,.env.*.example,.env.*.sample"
+    },
+    "protect_bash": {
+      "type": "boolean",
+      "title": "Check Bash",
+      "description": "Best-effort check of shell writes, deletes and moves.",
+      "default": true
+    },
+    "protect_maxAllowMin": {
+      "type": "number",
+      "title": "Max allowance (min)",
+      "description": "Upper bound for /protect allow durations.",
+      "default": 60
+    },
+    "protect_caseInsensitive": {
+      "type": "boolean",
+      "title": "Case-insensitive",
+      "description": "Compare paths case-insensitively (macOS).",
+      "default": true
+    },
+    "protect_mcpRules": {
+      "type": "string",
+      "title": "MCP write rules",
+      "description": "JSON list [{\"tool\":\"mcp__x__y\",\"arg\":\"path\"}] of MCP tools to inspect. Empty by default.",
+      "default": "[]"
+    },
+    "checkpoint_enabled": {
+      "type": "boolean",
+      "title": "Checkpoints on",
+      "description": "Take checkpoints after turns that changed files.",
+      "default": true
+    },
+    "checkpoint_minIntervalSec": {
+      "type": "number",
+      "title": "Min interval (s)",
+      "description": "Minimum seconds between checkpoints.",
+      "default": 120
+    },
+    "checkpoint_keepDays": {
+      "type": "number",
+      "title": "Keep days",
+      "description": "Checkpoint refs older than this are deleted at session start.",
+      "default": 14
+    },
+    "checkpoint_maxUntracked": {
+      "type": "number",
+      "title": "Max untracked files",
+      "description": "Skip checkpoints when more untracked files than this exist.",
+      "default": 2000
+    },
+    "checkpoint_maxPerSession": {
+      "type": "number",
+      "title": "Max per session",
+      "description": "Stop checkpointing after this many in one session.",
+      "default": 500
+    },
+    "checkpoint_exclude": {
+      "type": "string",
+      "title": "Excluded globs",
+      "description": "Comma list of globs kept out of checkpoints.",
+      "default": ".env*,*.pem,*.key,*.p12,id_rsa*,*.sqlite,*.kdbx"
+    },
+    "checkpoint_statusLine": {
+      "type": "boolean",
+      "title": "Status line",
+      "description": "Show the one-line safety status under the prompt.",
+      "default": true
+    }
+  }
+}

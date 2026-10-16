@@ -1,0 +1,138 @@
+// Toast limiter and the shared toast convention (conventions s7, incl. 7.5).
+// Each toasting plugin self-limits AND publishes `lastShownAt` in its own $.state atom (via `onShown`);
+// peers are READ (any plugin may read any plugin's $.state) and never written. Missing peer atoms = no constraint.
+// Peer refs must be literals in source for `claude plugin validate`, so the readable peers are a fixed list.
+
+export type PeerName = 'awareness.headsup' | 'awareness.focus' | 'dev.toast' | 'compact.coach'
+/** Atom ref of each peer. A plugin whose register.tsx holds `$` writes literal refs itself; a facade (`state.get(ref)`) can use these. */
+export const PEER_REFS: Record<PeerName, { plugin: string; key: string }> = {
+  'awareness.headsup': { plugin: 'awareness', key: 'headsup' },
+  'awareness.focus': { plugin: 'awareness', key: 'focus' },
+  'dev.toast': { plugin: 'dev', key: 'toast' },
+  'compact.coach': { plugin: 'compact', key: 'coach' },
+}
+export type OfferResult = 'shown' | 'queued' | 'dropped'
+
+/** Ports the limiter needs; register.tsx builds them from `$` (see shared/NOTES.md, "Ports pattern"). */
+export type ToastPorts = {
+  now: () => Promise<number>
+  toast: (text: string, options?: { timeoutMs?: number }) => void
+  /** Peer slice by name (literal `$.state.get` refs live in register.tsx); undefined when absent. Should not throw. */
+  readPeer: (name: PeerName) => Promise<any>
+}
+
+/** The gap rule alone (limiter and compact share it): ms until a toast may show, 0 = now, Infinity = quiet. */
+export async function toastWaitMs(
+  ports: Pick<ToastPorts, 'readPeer'>,
+  o: { now: number; lastShownAt?: number; minGapMs: number; peers?: readonly PeerName[]; respectQuiet?: boolean },
+): Promise<number> {
+  const peers = o.peers ?? []
+  let until = o.lastShownAt != null ? o.lastShownAt + o.minGapMs : 0
+  for (const p of peers) {
+    let v: any
+    try { v = await ports.readPeer(p) } catch { v = undefined }
+    if (typeof v?.lastShownAt === 'number') until = Math.max(until, v.lastShownAt + o.minGapMs)
+  }
+  if (o.respectQuiet ?? peers.length > 0) {
+    let f: any
+    try { f = await ports.readPeer('awareness.focus') } catch { f = undefined }
+    if (f?.phase === 'focus') return Infinity
+    let h: any
+    try { h = await ports.readPeer('awareness.headsup') } catch { h = undefined }
+    if (typeof h?.mutedUntil === 'number' && h.mutedUntil > o.now) return Infinity
+  }
+  return Math.max(0, until - o.now)
+}
+
+export type LimiterOpts = {
+  /** Minimum gap between shown toasts (ms). Heads-Up and PR Radar 60000; others 30000. */
+  minGapMs?: number
+  /** Peers whose `lastShownAt` also counts toward the gap. */
+  peers?: readonly PeerName[]
+  /** Honour `awareness.focus.phase === 'focus'` and `awareness.headsup.mutedUntil`. Default true when `peers` is non-empty. */
+  respectQuiet?: boolean
+  /** Own extra quiet test (e.g. Heads-Up's own focus/mute state). true = hold. */
+  quiet?: () => boolean | Promise<boolean>
+  /** Same id is dropped when shown less than this long ago (per-path limiting for safety = 30000). Default 0. */
+  perIdGapMs?: number
+  /** Queue size cap; the lowest-priority entry is dropped beyond it. Default 8. */
+  maxQueue?: number
+  /** Called after each shown toast: publish `lastShownAt` in your own $.state atom here. */
+  onShown?: (info: { id: string; at: number; text: string }) => void | Promise<void>
+}
+
+/**
+ * `offer(ports, id, text, {priority})` -> 'shown' (toast raised now), 'queued' (held; `flush(ports)` shows it once the gap
+ * passes and nothing is quiet) or 'dropped' (per-id gap, or evicted from a full queue). Lower `priority` number =
+ * more important. A queued id is replaced by a newer offer of the same id. `text` is final (<= 140 chars, one line).
+ */
+export function createLimiter(opts: LimiterOpts = {}) {
+  const minGap = opts.minGapMs ?? 30_000
+  const peers = opts.peers ?? []
+  const respectQuiet = opts.respectQuiet ?? peers.length > 0
+  const maxQueue = opts.maxQueue ?? 8
+  let lastShownAt: number | undefined
+  const lastById = new Map<string, number>()
+  let queue: { id: string; text: string; priority: number; timeoutMs?: number; seq: number }[] = []
+  let seq = 0
+
+  /** ms until a toast may show (0 = now); Infinity while quiet. */
+  async function wait(ports: ToastPorts, now: number): Promise<number> {
+    if (opts.quiet && (await opts.quiet())) return Infinity
+    return toastWaitMs(ports, { now, lastShownAt, minGapMs: minGap, peers, respectQuiet })
+  }
+
+  async function show(ports: ToastPorts, e: { id: string; text: string; timeoutMs?: number }, now: number): Promise<void> {
+    ports.toast(e.text, e.timeoutMs != null ? { timeoutMs: e.timeoutMs } : undefined)
+    lastShownAt = now
+    lastById.set(e.id, now)
+    if (opts.onShown) await opts.onShown({ id: e.id, at: now, text: e.text })
+  }
+
+  return {
+    async offer(ports: ToastPorts, id: string, text: string, o: { priority?: number; timeoutMs?: number } = {}): Promise<OfferResult> {
+      const now = await ports.now()
+      const per = opts.perIdGapMs ?? 0
+      const prev = lastById.get(id)
+      if (per > 0 && prev != null && now - prev < per) return 'dropped'
+      if ((await wait(ports, now)) === 0) {
+        queue = queue.filter(q => q.id !== id)
+        await show(ports, { id, text, timeoutMs: o.timeoutMs }, now)
+        return 'shown'
+      }
+      queue = queue.filter(q => q.id !== id)
+      queue.push({ id, text, priority: o.priority ?? 5, timeoutMs: o.timeoutMs, seq: seq++ })
+      queue.sort((a, b) => a.priority - b.priority || a.seq - b.seq)
+      if (queue.length > maxQueue) {
+        const dropped = queue.pop()
+        if (dropped?.id === id) return 'dropped'
+      }
+      return 'queued'
+    },
+    /** Shows the best queued toast when allowed. Call from a timer / turn.complete. Returns its id. */
+    async flush(ports: ToastPorts): Promise<string | undefined> {
+      if (queue.length === 0) return undefined
+      const now = await ports.now()
+      if ((await wait(ports, now)) !== 0) return undefined
+      const next = queue.shift() as (typeof queue)[number]
+      await show(ports, next, now)
+      return next.id
+    },
+    /** Milliseconds until the queue head could show (Infinity while quiet or empty). */
+    async nextInMs(ports: ToastPorts): Promise<number> {
+      return queue.length === 0 ? Infinity : wait(ports, await ports.now())
+    },
+    pending: (): string[] => queue.map(q => q.id),
+    clearQueue: (): void => { queue = [] },
+    get lastShownAt(): number | undefined { return lastShownAt },
+    /** Restore after a hot reload (from the plugin's own atom). */
+    seed(at: number | undefined): void { lastShownAt = at },
+  }
+}
+export type Limiter = ReturnType<typeof createLimiter>
+
+/** Toast text: `TITLE · detail. Run /cmd.` clipped to 140 chars on one line. */
+export function toastText(title: string, detail: string, hint?: string, prefix = ''): string {
+  const s = `${prefix}${title} · ${detail}${hint ? ' ' + hint : ''}`.replace(/\s*\n\s*/g, ' ')
+  return s.length > 140 ? s.slice(0, 139).trimEnd() + '…' : s
+}

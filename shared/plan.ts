@@ -1,0 +1,53 @@
+// Plan/spec checkbox parsing and title matching (awareness Spec Tracker, mission board). Pure.
+
+export type Checkbox = { line: number; checked: boolean; text: string; depth: number }
+
+const CB = /^(\s*)([-*+]|\d+[.)])\s+\[( |x|X)\]\s+(.*)$/
+const FENCE = /^\s*(```|~~~)/
+
+/**
+ * Markdown checkboxes, fenced code blocks skipped. `line` is 1-based. `nested: 'top'` keeps only items
+ * with indentation < 2 columns. Stops at `max` (500). Caller caps input at 256 KB.
+ */
+export function parseCheckboxes(text: string, o: { nested?: 'all' | 'top'; max?: number } = {}): Checkbox[] {
+  const out: Checkbox[] = []
+  const max = o.max ?? 500
+  let fence: string | undefined
+  const lines = text.split('\n')
+  for (let i = 0; i < lines.length && out.length < max; i++) {
+    const l = (lines[i] as string).replace(/\r$/, '')
+    const f = FENCE.exec(l)
+    if (f) {
+      if (!fence) fence = f[1]
+      else if (f[1] === fence) fence = undefined
+      continue
+    }
+    if (fence) continue
+    const m = CB.exec(l)
+    if (!m) continue
+    const depth = (m[1] as string).replace(/\t/g, '  ').length
+    if (o.nested === 'top' && depth >= 2) continue
+    out.push({ line: i + 1, checked: m[3] !== ' ', text: (m[4] as string).trim(), depth })
+  }
+  return out
+}
+
+export const countChecked = (items: readonly Checkbox[]): { done: number; total: number } => ({ done: items.filter(i => i.checked).length, total: items.length })
+export const firstUnchecked = (items: readonly Checkbox[]): Checkbox | undefined => items.find(i => !i.checked)
+
+const STOP = new Set(['a', 'an', 'the', 'to', 'of', 'and', 'for'])
+/** Lowercase, non-alphanumerics to spaces, drop `a an the to of and for`, collapse. */
+export function norm(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').split(' ').filter(w => w && !STOP.has(w)).join(' ')
+}
+export const tokenSet = (s: string): Set<string> => new Set(norm(s).split(' ').filter(Boolean))
+export function jaccard(a: ReadonlySet<string>, b: ReadonlySet<string>): number {
+  if (a.size === 0 && b.size === 0) return 1
+  let inter = 0
+  for (const x of a) if (b.has(x)) inter++
+  return inter / (a.size + b.size - inter)
+}
+/** Same item: `norm` equal or token Jaccard >= `threshold` (0.8 for merging, 0.6 for agent mapping). */
+export function sameTitle(a: string, b: string, threshold = 0.8): boolean {
+  return norm(a) === norm(b) || jaccard(tokenSet(a), tokenSet(b)) >= threshold
+}

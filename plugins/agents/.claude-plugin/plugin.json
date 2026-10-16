@@ -1,0 +1,229 @@
+{
+  "name": "agents",
+  "version": "1.2.0",
+  "description": "Pets in Still Room, Review Queue, Delegation Guard and Mission Board: subagents, unreviewed work, model policy with spend by tier, and plan progress across all agents. Replaces agent-pets.",
+  "types": "./types/index.d.ts",
+  "author": {
+    "name": "Pratik Ghose",
+    "url": "https://github.com/pratikgh0se"
+  },
+  "userConfig": {
+    "mod_pets_enabled": {
+      "type": "boolean",
+      "title": "Pets",
+      "description": "Enable the pets mod (pane, pets button).",
+      "default": true
+    },
+    "mod_review_enabled": {
+      "type": "boolean",
+      "title": "Review Queue",
+      "description": "Enable the review queue mod.",
+      "default": true
+    },
+    "mod_delegation_enabled": {
+      "type": "boolean",
+      "title": "Delegation Guard",
+      "description": "Enable the delegation guard mod.",
+      "default": true
+    },
+    "mod_mission_enabled": {
+      "type": "boolean",
+      "title": "Mission Board",
+      "description": "Enable the mission board mod (also mission.enabled).",
+      "default": true
+    },
+    "mission_enabled": {
+      "type": "boolean",
+      "title": "Mission Board (alias)",
+      "description": "Same switch as mod.mission.enabled; false turns the mod off.",
+      "default": true
+    },
+    "minBandRows": {
+      "type": "number",
+      "title": "Min band rows",
+      "description": "Below this many free rows the band row is hidden.",
+      "default": 4
+    },
+    "pets_mascots": {
+      "type": "string",
+      "title": "Mascots",
+      "description": "auto and on draw the Pom/Carrot stills; off draws the block mark.",
+      "default": "auto",
+      "options": [
+        "auto",
+        "on",
+        "off"
+      ]
+    },
+    "pets_terminalStills": {
+      "type": "boolean",
+      "title": "Terminal stills",
+      "description": "Reserved: draw stills in kitty/Ghostty terminals (not implemented yet).",
+      "default": false
+    },
+    "pets_maxRuns": {
+      "type": "number",
+      "title": "Max runs",
+      "description": "Runs kept in the pets list.",
+      "default": 100
+    },
+    "pets_maxDone": {
+      "type": "number",
+      "title": "Max done shown",
+      "description": "Finished pets shown in the pane.",
+      "default": 12
+    },
+    "pets_autoOpen": {
+      "type": "boolean",
+      "title": "Auto open",
+      "description": "Open the pets pane once, on the first spawn of a session.",
+      "default": true
+    },
+    "showChecklist": {
+      "type": "boolean",
+      "title": "Checklist band",
+      "description": "Show the TodoWrite/TaskCreate checklist in the band (awareness Now Doing owns it by default).",
+      "default": false
+    },
+    "review_remindMin": {
+      "type": "number",
+      "title": "Remind after (min)",
+      "description": "Minutes before the review segment shows the oldest age and a warn edge.",
+      "default": 10
+    },
+    "review_includeBackfilled": {
+      "type": "boolean",
+      "title": "Queue backfilled agents",
+      "description": "Also queue agents first seen through the live agent list.",
+      "default": false
+    },
+    "review_toast": {
+      "type": "boolean",
+      "title": "Review toast",
+      "description": "Reserved: no toast is raised by default.",
+      "default": false
+    },
+    "delegation_mode": {
+      "type": "string",
+      "title": "Guard mode",
+      "description": "warn toasts, deny blocks a model-less Agent call, off only tracks spend. /delegation overrides and persists.",
+      "default": "warn",
+      "options": [
+        "warn",
+        "deny",
+        "off"
+      ]
+    },
+    "delegation_allowTypes": {
+      "type": "string",
+      "title": "Allowed types",
+      "description": "Comma globs of agent types that pin their own model.",
+      "default": "savvy-*,*:savvy-*"
+    },
+    "delegation_toast": {
+      "type": "boolean",
+      "title": "Guard toast",
+      "description": "Toast on a model-less spawn in warn mode.",
+      "default": true
+    },
+    "delegation_minGapMs": {
+      "type": "number",
+      "title": "Toast gap (ms)",
+      "description": "Minimum gap between guard toasts.",
+      "default": 30000
+    },
+    "nesting_mode": {
+      "type": "string",
+      "title": "Nesting guard mode",
+      "description": "warn toasts when a subagent starts a subagent, deny refuses the call, off ignores it. /delegation nesting overrides and persists.",
+      "default": "warn",
+      "options": [
+        "warn",
+        "deny",
+        "off"
+      ]
+    },
+    "nesting_allowTypes": {
+      "type": "string",
+      "title": "Nesting allowed types",
+      "description": "Comma globs of agent types a subagent may start.",
+      "default": ""
+    },
+    "nesting_toast": {
+      "type": "boolean",
+      "title": "Nesting toast",
+      "description": "Toast on a nested spawn in warn mode.",
+      "default": true
+    },
+    "nesting_minGapMs": {
+      "type": "number",
+      "title": "Nesting toast gap (ms)",
+      "description": "Minimum gap between nesting toasts.",
+      "default": 30000
+    },
+    "runaway_maxSteps": {
+      "type": "number",
+      "title": "Runaway steps",
+      "description": "Warn when one subagent reaches this many steps (0 = off).",
+      "default": 100
+    },
+    "runaway_maxContext": {
+      "type": "number",
+      "title": "Runaway context",
+      "description": "Warn when one subagent step reaches this many context tokens (0 = off).",
+      "default": 300000
+    },
+    "runaway_toast": {
+      "type": "boolean",
+      "title": "Runaway toast",
+      "description": "Toast when a runaway threshold fires (the row mark and band segment always show).",
+      "default": true
+    },
+    "pricesJson": {
+      "type": "string",
+      "title": "Prices override",
+      "description": "JSON {\"asOf\":\"YYYY-MM-DD\",\"opus\":{\"input\":..,\"output\":..,\"cacheRead\":..,\"write5m\":..}} per MTok. Empty = built-in table.",
+      "default": ""
+    },
+    "windowsJson": {
+      "type": "string",
+      "title": "Context windows override",
+      "description": "JSON {\"asOf\":\"YYYY-MM-DD\",\"sonnet\":200000,\"opus\":1000000} tokens per family (or a model-id substring). Empty = built-in table.",
+      "default": ""
+    },
+    "mission_stepLine": {
+      "type": "boolean",
+      "title": "Spawn line",
+      "description": "Append the progress line to every subagent prompt.",
+      "default": true
+    },
+    "mission_stepVia": {
+      "type": "string",
+      "title": "Step channel",
+      "description": "tool = deferred mcp__agents__step; bash = echo MISSION_STEP n/m.",
+      "default": "tool",
+      "options": [
+        "tool",
+        "bash"
+      ]
+    },
+    "mission_typicalTurns": {
+      "type": "string",
+      "title": "Typical turns",
+      "description": "JSON {\"Explore\":8,\"general-purpose\":20,\"other\":15} used for estimates.",
+      "default": "{\"Explore\":8,\"general-purpose\":20,\"other\":15}"
+    },
+    "mission_maxTiles": {
+      "type": "number",
+      "title": "Max tiles",
+      "description": "Clickable tiles in the pane before a +N more button.",
+      "default": 120
+    },
+    "mission_specGlobs": {
+      "type": "string",
+      "title": "Spec globs",
+      "description": "Comma globs of plan/spec files discovered from edits.",
+      "default": "**/docs/**/*plan*.md,**/docs/**/*spec*.md,**/plans/**/*.md,**/specs/**/*.md,**/PLAN.md,**/SPEC.md,**/.claude/plans/**/*.md"
+    }
+  }
+}
