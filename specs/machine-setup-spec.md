@@ -343,3 +343,7 @@ Leak scan (fixture tree in a temp git repo; outputs checked with grep; every fin
 4. The public autosync author-email guard (noreply only) is kept (11.7, AC 69).
 5. `home-path` and `uuid` leak findings are strict; exemptions only through `.leak-scan-allow` / overlay `leak-allow.txt` entries or inline `leak-scan: allow=` markers (11.8, AC 78).
 6. Overlay discovery uses only `MACHINE_SETUP_PRIVATE` (else `../machine-setup-private`; `none` disables) in all three scripts and scheduled jobs (11.2). Bootstrap's launchd step is opt-in via `--launchd` (3).
+
+### Launchd PATH (referee 2026-10-16)
+Found live: under launchd the canary logged `skip` / `claude_missing` because the job environment had no Homebrew path (`bash -lc` does not source zsh profiles). Rule:
+85. Every public launchd template (`launchd/*.plist.tmpl`) sets `EnvironmentVariables` with `HOME` = `__HOME__` and `PATH` = `__HOME__/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`; the rendered plist passes `plutil -lint` and contains no `__` tokens. Bootstrap re-installs a job whose installed plist lacks that PATH (it counts as "plist differs").
