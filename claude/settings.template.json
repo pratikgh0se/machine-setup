@@ -7,7 +7,6 @@
   "permissions": {
     "allow": [
       "Edit(~/.local/state/claude-handoffs/**)",
-      "Write(~/.local/state/claude-handoffs/**)",
       "Bash(ps:*)",
       "Bash(grep:*)",
       "Bash(tail:*)",
