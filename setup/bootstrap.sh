@@ -171,7 +171,7 @@ while IFS= read -r -d '' f; do
   rel="${f#$EFF/claude/}"
   case "$rel" in plugins.json|placeholders.txt|hook-deps.tsv|*.links.tsv) continue;; esac
   install_file "$f" "$C/$rel"
-done < <(find "$EFF/claude" -type f -not -name .DS_Store -print0 | LC_ALL=C sort -z)
+done < <(find "$EFF/claude" -type f -not -name .DS_Store -not -name "*.pyc" -not -path "*/__pycache__/*" -print0 | LC_ALL=C sort -z)
 while IFS=$'\t' read -r name tgt; do
   [ -n "$name" ] || continue; tgt="${tgt//__HOME__/$H}"; link_to "$tgt" "$C/skills/$name"
 done < "$EFF/claude/skills.links.tsv"
