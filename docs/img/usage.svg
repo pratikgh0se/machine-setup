@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 440" width="900" height="440" role="img" aria-label="usage plugin: band row with burn meter, context alert and cache clock"><title>usage plugin: band row with burn meter, context alert and cache clock</title><style>
+:root{--bg:#ffffff;--panel:#f6f8fa;--panel2:#eaeef2;--line:#d0d7de;--text:#1f2328;--muted:#59636e;
+--accent:#0969da;--accent-bg:#ddf4ff;--ok:#1a7f37;--ok-bg:#dafbe1;--warn:#9a6700;--warn-bg:#fff8c5;
+--bad:#cf222e;--bad-bg:#ffebe9;--orange:#bc4c00;--orange-bg:#fff1e5}
+@media (prefers-color-scheme: dark){:root{--bg:#0d1117;--panel:#161b22;--panel2:#21262d;--line:#3d444d;--text:#e6edf3;--muted:#9198a1;
+--accent:#58a6ff;--accent-bg:#14304f;--ok:#3fb950;--ok-bg:#12351d;--warn:#d29922;--warn-bg:#3a2d0a;
+--bad:#ff7b72;--bad-bg:#45191b;--orange:#ffa657;--orange-bg:#3d2410}}
+.bg{fill:var(--bg)}.panel{fill:var(--panel);stroke:var(--line)}.panel2{fill:var(--panel2);stroke:var(--line)}
+.ln{stroke:var(--line);fill:none}.lns{stroke:var(--muted);fill:none;stroke-width:1.5}
+.t{font:14px -apple-system,'Segoe UI',Helvetica,Arial,sans-serif;fill:var(--text)}
+.tb{font:600 14px -apple-system,'Segoe UI',Helvetica,Arial,sans-serif;fill:var(--text)}
+.th{font:700 18px -apple-system,'Segoe UI',Helvetica,Arial,sans-serif;fill:var(--text)}
+.ts{font:12px -apple-system,'Segoe UI',Helvetica,Arial,sans-serif;fill:var(--muted)}
+.tsb{font:600 12px -apple-system,'Segoe UI',Helvetica,Arial,sans-serif;fill:var(--text)}
+.m{font:13px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;fill:var(--text)}
+.mm{font:13px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;fill:var(--muted)}
+.cap{font:italic 12px -apple-system,'Segoe UI',Helvetica,Arial,sans-serif;fill:var(--muted)}
+.k-n{fill:var(--panel2);stroke:var(--line)}.k-ok{fill:var(--ok-bg);stroke:var(--ok)}
+.k-warn{fill:var(--warn-bg);stroke:var(--warn)}.k-bad{fill:var(--bad-bg);stroke:var(--bad)}
+.k-acc{fill:var(--accent-bg);stroke:var(--accent)}.k-or{fill:var(--orange-bg);stroke:var(--orange)}
+.c-ok{fill:var(--ok)}.c-warn{fill:var(--warn)}.c-bad{fill:var(--bad)}.c-acc{fill:var(--accent)}.c-or{fill:var(--orange)}.c-mu{fill:var(--muted)}
+.c-line{fill:var(--line)}
+</style><rect width="900" height="440" class="bg"/><rect x="20" y="14" width="860" height="386" rx="10" class="panel" />
+<text x="36" y="36" class="tsb">Claude Code  ·  bento-demo</text>
+<circle cx="840" cy="31" r="4.5" class="c-bad"/>
+<circle cx="856" cy="31" r="4.5" class="c-warn"/>
+<circle cx="872" cy="31" r="4.5" class="c-ok"/>
+<line x1="20" y1="46" x2="880" y2="46" class="ln" />
+<text x="36" y="70" class="ts">Band row above the prompt</text>
+<rect x="36" y="80" width="828" height="40" rx="6" class="panel2" />
+<text x="46" y="105" class="m">5H</text>
+<rect x="70" y="94" width="7" height="12" rx="1.5" class="c-warn" />
+<rect x="79" y="94" width="7" height="12" rx="1.5" class="c-warn" />
+<rect x="88" y="94" width="7" height="12" rx="1.5" class="c-warn" />
+<rect x="97" y="94" width="7" height="12" rx="1.5" class="c-warn" />
+<rect x="106" y="94" width="7" height="12" rx="1.5" class="c-warn" />
+<rect x="115" y="94" width="7" height="12" rx="1.5" class="c-warn" />
+<rect x="124" y="94" width="7" height="12" rx="1.5" class="c-warn" />
+<rect x="133" y="94" width="7" height="12" rx="1.5" class="c-line" />
+<rect x="142" y="94" width="7" height="12" rx="1.5" class="c-line" />
+<rect x="151" y="94" width="7" height="12" rx="1.5" class="c-line" />
+<rect x="160" y="94" width="7" height="12" rx="1.5" class="c-line" />
+<rect x="169" y="94" width="7" height="12" rx="1.5" class="c-line" />
+<text x="184" y="105" class="m">62%</text>
+<text x="230" y="105" class="m">7D</text>
+<rect x="254" y="94" width="7" height="12" rx="1.5" class="c-bad" />
+<rect x="263" y="94" width="7" height="12" rx="1.5" class="c-bad" />
+<rect x="272" y="94" width="7" height="12" rx="1.5" class="c-bad" />
+<rect x="281" y="94" width="7" height="12" rx="1.5" class="c-bad" />
+<rect x="290" y="94" width="7" height="12" rx="1.5" class="c-bad" />
+<rect x="299" y="94" width="7" height="12" rx="1.5" class="c-bad" />
+<rect x="308" y="94" width="7" height="12" rx="1.5" class="c-bad" />
+<rect x="317" y="94" width="7" height="12" rx="1.5" class="c-bad" />
+<rect x="326" y="94" width="7" height="12" rx="1.5" class="c-bad" />
+<rect x="335" y="94" width="7" height="12" rx="1.5" class="c-line" />
+<rect x="344" y="94" width="7" height="12" rx="1.5" class="c-line" />
+<rect x="353" y="94" width="7" height="12" rx="1.5" class="c-line" />
+<text x="368" y="105" class="m">71%</text>
+<rect x="414" y="88" width="41" height="24" rx="5" class="k-bad" />
+<text x="423" y="104.5" class="m">HOT</text>
+<text x="463" y="105" class="mm">weekly limit Thu 14:00</text>
+<line x1="36" y1="136" x2="864" y2="136" class="ln" />
+<rect x="36" y="146" width="828" height="40" rx="6" class="panel2" />
+<text x="46" y="171" class="m">CTX</text>
+<rect x="80" y="160" width="7" height="12" rx="1.5" class="c-warn" />
+<rect x="89" y="160" width="7" height="12" rx="1.5" class="c-warn" />
+<rect x="98" y="160" width="7" height="12" rx="1.5" class="c-warn" />
+<rect x="107" y="160" width="7" height="12" rx="1.5" class="c-warn" />
+<rect x="116" y="160" width="7" height="12" rx="1.5" class="c-warn" />
+<rect x="125" y="160" width="7" height="12" rx="1.5" class="c-warn" />
+<rect x="134" y="160" width="7" height="12" rx="1.5" class="c-warn" />
+<rect x="143" y="160" width="7" height="12" rx="1.5" class="c-warn" />
+<rect x="152" y="160" width="7" height="12" rx="1.5" class="c-warn" />
+<rect x="161" y="160" width="7" height="12" rx="1.5" class="c-line" />
+<rect x="170" y="160" width="7" height="12" rx="1.5" class="c-line" />
+<rect x="179" y="160" width="7" height="12" rx="1.5" class="c-line" />
+<text x="194" y="171" class="m">78% · 12% to compact</text>
+<text x="397.8" y="171" class="m">CACHE</text>
+<rect x="449.8" y="160" width="7" height="12" rx="1.5" class="c-ok" />
+<rect x="458.8" y="160" width="7" height="12" rx="1.5" class="c-ok" />
+<rect x="467.8" y="160" width="7" height="12" rx="1.5" class="c-ok" />
+<rect x="476.8" y="160" width="7" height="12" rx="1.5" class="c-ok" />
+<rect x="485.8" y="160" width="7" height="12" rx="1.5" class="c-ok" />
+<rect x="494.8" y="160" width="7" height="12" rx="1.5" class="c-ok" />
+<rect x="503.8" y="160" width="7" height="12" rx="1.5" class="c-ok" />
+<rect x="512.8" y="160" width="7" height="12" rx="1.5" class="c-ok" />
+<rect x="521.8" y="160" width="7" height="12" rx="1.5" class="c-line" />
+<rect x="530.8" y="160" width="7" height="12" rx="1.5" class="c-line" />
+<rect x="539.8" y="160" width="7" height="12" rx="1.5" class="c-line" />
+<rect x="548.8" y="160" width="7" height="12" rx="1.5" class="c-line" />
+<text x="563.8" y="171" class="m">38:12 warm · saves $6.80 today</text>
+<text x="36" y="208" class="ts">Real order, left to right: Burn Meter, Compaction Alert, Cache Clock. They share one row; the lowest-priority chip drops first when it is narrow.</text>
+<text x="36" y="230" class="tsb">Other states</text>
+<rect x="36" y="242" width="270" height="24" rx="5" class="k-n" />
+<text x="45" y="258.5" class="m">cache cold · return costs ~$0.42</text>
+<rect x="346.40000000000003" y="242" width="168" height="24" rx="5" class="k-ok" />
+<text x="355.40000000000003" y="258.5" class="m">COMPACTED 91% → 23%</text>
+<rect x="546.2" y="242" width="223" height="24" rx="5" class="k-warn" />
+<text x="555.2" y="258.5" class="m">CTX 78% · auto-compact off</text>
+<text x="36" y="290" class="ts">Pace chip values: LEARNING, PLENTY, ON PACE, HOT, LIMIT (the chip shows the worse of the two windows).</text>
+<text x="36" y="372" class="tsb">Commands</text>
+<rect x="120" y="355" width="57" height="24" rx="5" class="k-acc" />
+<text x="129" y="371.5" class="m">/burn</text>
+<text x="185" y="372" class="ts">text card with both windows, pace, projection, session cost</text>
+<rect x="560" y="355" width="104" height="24" rx="5" class="k-acc" />
+<text x="569" y="371.5" class="m">/cacheclock</text>
+<text x="672" y="372" class="ts">opens the cache-clock pane</text>
+<text x="24" y="428" class="cap">Illustration — not a screenshot</text></svg>

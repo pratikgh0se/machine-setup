@@ -1,0 +1,110 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 690" width="900" height="690" role="img" aria-label="dev plugin: git, test, coverage, typecheck, PR and diff chips with panes"><title>dev plugin: git, test, coverage, typecheck, PR and diff chips with panes</title><style>
+:root{--bg:#ffffff;--panel:#f6f8fa;--panel2:#eaeef2;--line:#d0d7de;--text:#1f2328;--muted:#59636e;
+--accent:#0969da;--accent-bg:#ddf4ff;--ok:#1a7f37;--ok-bg:#dafbe1;--warn:#9a6700;--warn-bg:#fff8c5;
+--bad:#cf222e;--bad-bg:#ffebe9;--orange:#bc4c00;--orange-bg:#fff1e5}
+@media (prefers-color-scheme: dark){:root{--bg:#0d1117;--panel:#161b22;--panel2:#21262d;--line:#3d444d;--text:#e6edf3;--muted:#9198a1;
+--accent:#58a6ff;--accent-bg:#14304f;--ok:#3fb950;--ok-bg:#12351d;--warn:#d29922;--warn-bg:#3a2d0a;
+--bad:#ff7b72;--bad-bg:#45191b;--orange:#ffa657;--orange-bg:#3d2410}}
+.bg{fill:var(--bg)}.panel{fill:var(--panel);stroke:var(--line)}.panel2{fill:var(--panel2);stroke:var(--line)}
+.ln{stroke:var(--line);fill:none}.lns{stroke:var(--muted);fill:none;stroke-width:1.5}
+.t{font:14px -apple-system,'Segoe UI',Helvetica,Arial,sans-serif;fill:var(--text)}
+.tb{font:600 14px -apple-system,'Segoe UI',Helvetica,Arial,sans-serif;fill:var(--text)}
+.th{font:700 18px -apple-system,'Segoe UI',Helvetica,Arial,sans-serif;fill:var(--text)}
+.ts{font:12px -apple-system,'Segoe UI',Helvetica,Arial,sans-serif;fill:var(--muted)}
+.tsb{font:600 12px -apple-system,'Segoe UI',Helvetica,Arial,sans-serif;fill:var(--text)}
+.m{font:13px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;fill:var(--text)}
+.mm{font:13px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;fill:var(--muted)}
+.cap{font:italic 12px -apple-system,'Segoe UI',Helvetica,Arial,sans-serif;fill:var(--muted)}
+.k-n{fill:var(--panel2);stroke:var(--line)}.k-ok{fill:var(--ok-bg);stroke:var(--ok)}
+.k-warn{fill:var(--warn-bg);stroke:var(--warn)}.k-bad{fill:var(--bad-bg);stroke:var(--bad)}
+.k-acc{fill:var(--accent-bg);stroke:var(--accent)}.k-or{fill:var(--orange-bg);stroke:var(--orange)}
+.c-ok{fill:var(--ok)}.c-warn{fill:var(--warn)}.c-bad{fill:var(--bad)}.c-acc{fill:var(--accent)}.c-or{fill:var(--orange)}.c-mu{fill:var(--muted)}
+.c-line{fill:var(--line)}
+</style><rect width="900" height="690" class="bg"/><rect x="20" y="14" width="860" height="586" rx="10" class="panel" />
+<text x="36" y="36" class="tsb">Claude Code  ·  bento-demo</text>
+<circle cx="840" cy="31" r="4.5" class="c-bad"/>
+<circle cx="856" cy="31" r="4.5" class="c-warn"/>
+<circle cx="872" cy="31" r="4.5" class="c-ok"/>
+<line x1="20" y1="46" x2="880" y2="46" class="ln" />
+<text x="36" y="66" class="ts">Band row, drawn wrapped here. Order: git, pulse, coverage, typecheck, pr, ports, diff. Narrow terminals drop diff and ports first.</text>
+<rect x="36" y="74" width="828" height="108" rx="6" class="panel2" />
+<rect x="46" y="82" width="270" height="24" rx="5" class="k-n" />
+<text x="55" y="98.5" class="m">main* ↑2 +3 ~5 ?1 · wt auth-flow</text>
+<rect x="324" y="82" width="255" height="24" rx="5" class="k-bad" />
+<text x="333" y="98.5" class="m">12 pass 3 fail · 2.3s · pytest</text>
+<rect x="587" y="82" width="112" height="24" rx="5" class="k-ok" />
+<text x="596" y="98.5" class="m">83.2% (+0.4)</text>
+<rect x="46" y="116" width="294" height="24" rx="5" class="k-warn" />
+<text x="55" y="132.5" class="m">! TSC 2 errors · fed back to Claude</text>
+<rect x="348" y="116" width="231" height="24" rx="5" class="k-ok" />
+<text x="357" y="132.5" class="m">#412 checks pass · APPROVED</text>
+<rect x="46" y="150" width="176" height="24" rx="5" class="k-n" />
+<text x="55" y="166.5" class="m">2 ports (3000, 5173)</text>
+<rect x="230" y="150" width="144" height="24" rx="5" class="k-n" />
+<text x="239" y="166.5" class="m">5 files +120 −34</text>
+<text x="36" y="214" class="tsb">Pane: changes  (files changed since the session started)</text>
+<rect x="36" y="222" width="410" height="138" rx="6" class="panel2" />
+<text x="48" y="244" class="m">M</text>
+<text x="70" y="244" class="m">src/sync/client.ts</text>
+<text x="240" y="244" class="mm">+41 −12</text>
+<rect x="330" y="234" width="84" height="10" rx="2" class="c-acc" />
+<text x="48" y="270" class="m">A</text>
+<text x="70" y="270" class="m">src/sync/retry.ts</text>
+<text x="240" y="270" class="mm">+52 −0</text>
+<rect x="330" y="260" width="83" height="10" rx="2" class="c-acc" />
+<text x="48" y="296" class="m">A</text>
+<text x="70" y="296" class="m">test/retry.test.ts</text>
+<text x="240" y="296" class="mm">+18 −0</text>
+<rect x="330" y="286" width="28" height="10" rx="2" class="c-acc" />
+<text x="48" y="322" class="m">M</text>
+<text x="70" y="322" class="m">src/index.ts</text>
+<text x="240" y="322" class="mm">+9 −4</text>
+<rect x="330" y="312" width="20" height="10" rx="2" class="c-acc" />
+<text x="48" y="348" class="m">D</text>
+<text x="70" y="348" class="m">src/legacy.ts</text>
+<text x="240" y="348" class="mm">+0 −18</text>
+<rect x="330" y="338" width="28" height="10" rx="2" class="c-acc" />
+<text x="466" y="214" class="tsb">Pane: pr-radar</text>
+<rect x="466" y="222" width="398" height="138" rx="6" class="panel2" />
+<text x="478" y="242" class="m">#412</text>
+<rect x="520" y="226" width="49" height="22" rx="5" class="k-ok" />
+<text x="529" y="242.5" class="m">pass</text>
+<text x="585.6" y="242" class="mm">APPROVED</text>
+<text x="478" y="258" class="ts">Add retry to sync client</text>
+<text x="478" y="278" class="m">#418</text>
+<rect x="520" y="262" width="49" height="22" rx="5" class="k-bad" />
+<text x="529" y="278.5" class="m">fail</text>
+<text x="585.6" y="278" class="mm"></text>
+<text x="478" y="294" class="ts">Parser cleanup</text>
+<text x="478" y="314" class="m">#421</text>
+<rect x="520" y="298" width="73" height="22" rx="5" class="k-n" />
+<text x="529" y="314.5" class="m">running</text>
+<text x="609.3" y="314" class="mm"></text>
+<text x="478" y="330" class="ts">Docs pass</text>
+<text x="36" y="392" class="tsb">Pane: ports</text>
+<rect x="36" y="400" width="410" height="70" rx="6" class="panel2" />
+<text x="48" y="422" class="m">3000  node   yours</text>
+<rect x="330" y="406" width="49" height="22" rx="5" class="k-bad" />
+<text x="339" y="422.5" class="m">STOP</text>
+<text x="48" y="448" class="m">5173  vite   yours</text>
+<rect x="330" y="432" width="49" height="22" rx="5" class="k-bad" />
+<text x="339" y="448.5" class="m">STOP</text>
+<text x="466" y="422" class="ts">STOP needs two presses within 5 seconds and sends</text>
+<text x="466" y="440" class="ts">SIGTERM only. Other listeners are listed, never killable.</text>
+<text x="36" y="500" class="ts">Typecheck Feedback appends error lines to the edit result so the model fixes them; when clean it adds:</text>
+<rect x="36" y="510" width="340" height="30" rx="6" class="panel2" />
+<text x="48" y="530" class="m">TYPECHECK: clean (tsc).</text>
+<text x="24" y="678" class="cap">Illustration — not a screenshot</text>
+<text x="24" y="626" class="tsb">Commands</text>
+<rect x="110" y="610" width="49" height="24" rx="5" class="k-acc" />
+<text x="119" y="626.5" class="m">/prs</text>
+<rect x="167" y="610" width="81" height="24" rx="5" class="k-acc" />
+<text x="176" y="626.5" class="m">/changes</text>
+<rect x="256" y="610" width="65" height="24" rx="5" class="k-acc" />
+<text x="265" y="626.5" class="m">/pulse</text>
+<rect x="329" y="610" width="89" height="24" rx="5" class="k-acc" />
+<text x="338" y="626.5" class="m">/coverage</text>
+<rect x="426" y="610" width="97" height="24" rx="5" class="k-acc" />
+<text x="435" y="626.5" class="m">/typecheck</text>
+<rect x="531" y="610" width="65" height="24" rx="5" class="k-acc" />
+<text x="540" y="626.5" class="m">/ports</text></svg>

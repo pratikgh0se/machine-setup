@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 560" width="1000" height="560" role="img" aria-label="Handoff timeline from 0 to 400k tokens"><title>Handoff timeline from 0 to 400k tokens</title><style>
+:root{--bg:#ffffff;--panel:#f6f8fa;--panel2:#eaeef2;--line:#d0d7de;--text:#1f2328;--muted:#59636e;
+--accent:#0969da;--accent-bg:#ddf4ff;--ok:#1a7f37;--ok-bg:#dafbe1;--warn:#9a6700;--warn-bg:#fff8c5;
+--bad:#cf222e;--bad-bg:#ffebe9;--orange:#bc4c00;--orange-bg:#fff1e5}
+@media (prefers-color-scheme: dark){:root{--bg:#0d1117;--panel:#161b22;--panel2:#21262d;--line:#3d444d;--text:#e6edf3;--muted:#9198a1;
+--accent:#58a6ff;--accent-bg:#14304f;--ok:#3fb950;--ok-bg:#12351d;--warn:#d29922;--warn-bg:#3a2d0a;
+--bad:#ff7b72;--bad-bg:#45191b;--orange:#ffa657;--orange-bg:#3d2410}}
+.bg{fill:var(--bg)}.panel{fill:var(--panel);stroke:var(--line)}.panel2{fill:var(--panel2);stroke:var(--line)}
+.ln{stroke:var(--line);fill:none}.lns{stroke:var(--muted);fill:none;stroke-width:1.5}
+.t{font:14px -apple-system,'Segoe UI',Helvetica,Arial,sans-serif;fill:var(--text)}
+.tb{font:600 14px -apple-system,'Segoe UI',Helvetica,Arial,sans-serif;fill:var(--text)}
+.th{font:700 18px -apple-system,'Segoe UI',Helvetica,Arial,sans-serif;fill:var(--text)}
+.ts{font:12px -apple-system,'Segoe UI',Helvetica,Arial,sans-serif;fill:var(--muted)}
+.tsb{font:600 12px -apple-system,'Segoe UI',Helvetica,Arial,sans-serif;fill:var(--text)}
+.m{font:13px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;fill:var(--text)}
+.mm{font:13px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;fill:var(--muted)}
+.cap{font:italic 12px -apple-system,'Segoe UI',Helvetica,Arial,sans-serif;fill:var(--muted)}
+.k-n{fill:var(--panel2);stroke:var(--line)}.k-ok{fill:var(--ok-bg);stroke:var(--ok)}
+.k-warn{fill:var(--warn-bg);stroke:var(--warn)}.k-bad{fill:var(--bad-bg);stroke:var(--bad)}
+.k-acc{fill:var(--accent-bg);stroke:var(--accent)}.k-or{fill:var(--orange-bg);stroke:var(--orange)}
+.c-ok{fill:var(--ok)}.c-warn{fill:var(--warn)}.c-bad{fill:var(--bad)}.c-acc{fill:var(--accent)}.c-or{fill:var(--orange)}.c-mu{fill:var(--muted)}
+.c-line{fill:var(--line)}
+</style><rect width="1000" height="560" class="bg"/><text x="24" y="34" class="th">What happens as a session fills a 400k window</text>
+<rect x="60" y="231" width="807.4" height="18" rx="3" class="k-acc" />
+<rect x="867.4" y="231" width="72.60000000000002" height="18" rx="3" class="k-n" />
+<rect x="720.0" y="231" width="147.39999999999998" height="18" rx="0" class="k-warn" />
+<text x="390.0" y="244" class="ts" text-anchor="middle">normal work</text>
+<text x="775.0" y="244" class="tsb" text-anchor="middle">margin</text>
+<line x1="60.0" y1="249" x2="60.0" y2="256" class="ln" />
+<text x="60.0" y="270" class="ts" text-anchor="middle">0k</text>
+<line x1="280.0" y1="249" x2="280.0" y2="256" class="ln" />
+<text x="280.0" y="270" class="ts" text-anchor="middle">100k</text>
+<line x1="500.0" y1="249" x2="500.0" y2="256" class="ln" />
+<text x="500.0" y="270" class="ts" text-anchor="middle">200k</text>
+<line x1="720.0" y1="249" x2="720.0" y2="256" class="ln" />
+<text x="720.0" y="270" class="ts" text-anchor="middle">300k</text>
+<line x1="940.0" y1="249" x2="940.0" y2="256" class="ln" />
+<text x="940.0" y="270" class="ts" text-anchor="middle">400k</text>
+<style>.mk text{fill:#fff}</style>
+<line x1="720.0" y1="188" x2="720.0" y2="231" class="lns" />
+<circle cx="720.0" cy="240" r="11" class="c-warn"/>
+<text x="720.0" y="244.5" class="tsb" text-anchor="middle">1</text>
+<text x="720.0" y="162" class="tb" text-anchor="end">Nudge at 300k (75%)</text>
+<text x="720.0" y="178" class="t" text-anchor="end">agent writes its handoff</text>
+<line x1="830.0" y1="138" x2="830.0" y2="231" class="lns" />
+<circle cx="830.0" cy="240" r="11" class="c-warn"/>
+<text x="830.0" y="244.5" class="tsb" text-anchor="middle">2</text>
+<text x="830.0" y="112" class="tb" text-anchor="end">Re-nudge at 350k</text>
+<text x="830.0" y="128" class="t" text-anchor="end">(every 50k of growth)</text>
+<line x1="867.4" y1="276" x2="867.4" y2="231" class="lns" />
+<circle cx="867.4" cy="240" r="11" class="c-bad"/>
+<text x="867.4" y="244.5" class="tsb" text-anchor="middle">3</text>
+<line x1="867.4" y1="250" x2="867.4" y2="294" class="lns" />
+<text x="867.4" y="310" class="tb" text-anchor="end">Auto-compaction at ~367k</text>
+<text x="867.4" y="326" class="t" text-anchor="end">(window minus ~33k buffer)</text>
+<line x1="932" y1="100" x2="932" y2="231" class="lns" />
+<circle cx="932" cy="240" r="11" class="c-ok"/>
+<text x="932" y="244.5" class="tsb" text-anchor="middle">4</text>
+<text x="932" y="62" class="tb" text-anchor="end">Handoff injected (up to 3 parts)</text>
+<text x="932" y="80" class="t" text-anchor="end">session continues</text>
+<rect x="24" y="342" width="214" height="176" rx="8" class="k-warn" />
+<text x="36" y="366" class="tb">1  Nudge, 300k</text>
+<text x="36" y="386" class="ts">The compact plugin adds one</text>
+<text x="36" y="401" class="ts">short note to the next tool</text>
+<text x="36" y="416" class="ts">result.</text>
+<text x="36" y="439" class="tsb">Writes:</text>
+<text x="36" y="455" class="ts">agent file &lt;session&gt;-agent.md</text>
+<text x="36" y="470" class="ts">(six headings, by the model);</text>
+<text x="36" y="485" class="ts">&lt;session&gt;-agent.meta.json</text>
+<text x="36" y="500" class="ts">(counts only, by the plugin)</text>
+<rect x="252" y="342" width="214" height="176" rx="8" class="k-warn" />
+<text x="264" y="366" class="tb">2  Re-nudge, 350k</text>
+<text x="264" y="386" class="ts">Same note again after another</text>
+<text x="264" y="401" class="ts">50k tokens of growth, if the</text>
+<text x="264" y="416" class="ts">work moved on.</text>
+<text x="264" y="439" class="tsb">Writes:</text>
+<text x="264" y="455" class="ts">the agent rewrites</text>
+<text x="264" y="470" class="ts">&lt;session&gt;-agent.md; the plugin</text>
+<text x="264" y="485" class="ts">updates the meta file</text>
+<rect x="480" y="342" width="214" height="176" rx="8" class="k-bad" />
+<text x="492" y="366" class="tb">3  Compaction, ~367k</text>
+<text x="492" y="386" class="ts">Claude Code compacts. The</text>
+<text x="492" y="401" class="ts">PreCompact hook builds a</text>
+<text x="492" y="416" class="ts">deterministic handoff around</text>
+<text x="492" y="431" class="ts">the agent file (Haiku fallback</text>
+<text x="492" y="446" class="ts">if none is fresh).</text>
+<text x="492" y="469" class="tsb">Writes:</text>
+<text x="492" y="485" class="ts">the handoff file and one line</text>
+<text x="492" y="500" class="ts">in health.jsonl</text>
+<rect x="708" y="342" width="214" height="176" rx="8" class="k-ok" />
+<text x="720" y="366" class="tb">4  Continue</text>
+<text x="720" y="386" class="ts">The SessionStart hook injects</text>
+<text x="720" y="401" class="ts">the handoff once, in up to</text>
+<text x="720" y="416" class="ts">three parts. A degraded handoff</text>
+<text x="720" y="431" class="ts">also raises a toast and a band</text>
+<text x="720" y="446" class="ts">chip.</text>
+<text x="720" y="469" class="tsb">Writes:</text>
+<text x="720" y="485" class="ts">nothing new; reads the handoff</text>
+<text x="24" y="548" class="cap">Illustration — not a screenshot</text></svg>

@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 500" width="900" height="500" role="img" aria-label="compact plugin: coach chip, handoff flow and degraded alert"><title>compact plugin: coach chip, handoff flow and degraded alert</title><style>
+:root{--bg:#ffffff;--panel:#f6f8fa;--panel2:#eaeef2;--line:#d0d7de;--text:#1f2328;--muted:#59636e;
+--accent:#0969da;--accent-bg:#ddf4ff;--ok:#1a7f37;--ok-bg:#dafbe1;--warn:#9a6700;--warn-bg:#fff8c5;
+--bad:#cf222e;--bad-bg:#ffebe9;--orange:#bc4c00;--orange-bg:#fff1e5}
+@media (prefers-color-scheme: dark){:root{--bg:#0d1117;--panel:#161b22;--panel2:#21262d;--line:#3d444d;--text:#e6edf3;--muted:#9198a1;
+--accent:#58a6ff;--accent-bg:#14304f;--ok:#3fb950;--ok-bg:#12351d;--warn:#d29922;--warn-bg:#3a2d0a;
+--bad:#ff7b72;--bad-bg:#45191b;--orange:#ffa657;--orange-bg:#3d2410}}
+.bg{fill:var(--bg)}.panel{fill:var(--panel);stroke:var(--line)}.panel2{fill:var(--panel2);stroke:var(--line)}
+.ln{stroke:var(--line);fill:none}.lns{stroke:var(--muted);fill:none;stroke-width:1.5}
+.t{font:14px -apple-system,'Segoe UI',Helvetica,Arial,sans-serif;fill:var(--text)}
+.tb{font:600 14px -apple-system,'Segoe UI',Helvetica,Arial,sans-serif;fill:var(--text)}
+.th{font:700 18px -apple-system,'Segoe UI',Helvetica,Arial,sans-serif;fill:var(--text)}
+.ts{font:12px -apple-system,'Segoe UI',Helvetica,Arial,sans-serif;fill:var(--muted)}
+.tsb{font:600 12px -apple-system,'Segoe UI',Helvetica,Arial,sans-serif;fill:var(--text)}
+.m{font:13px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;fill:var(--text)}
+.mm{font:13px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;fill:var(--muted)}
+.cap{font:italic 12px -apple-system,'Segoe UI',Helvetica,Arial,sans-serif;fill:var(--muted)}
+.k-n{fill:var(--panel2);stroke:var(--line)}.k-ok{fill:var(--ok-bg);stroke:var(--ok)}
+.k-warn{fill:var(--warn-bg);stroke:var(--warn)}.k-bad{fill:var(--bad-bg);stroke:var(--bad)}
+.k-acc{fill:var(--accent-bg);stroke:var(--accent)}.k-or{fill:var(--orange-bg);stroke:var(--orange)}
+.c-ok{fill:var(--ok)}.c-warn{fill:var(--warn)}.c-bad{fill:var(--bad)}.c-acc{fill:var(--accent)}.c-or{fill:var(--orange)}.c-mu{fill:var(--muted)}
+.c-line{fill:var(--line)}
+</style><rect width="900" height="500" class="bg"/><rect x="20" y="14" width="860" height="426" rx="10" class="panel" />
+<text x="36" y="36" class="tsb">Claude Code  ·  bento-demo</text>
+<circle cx="840" cy="31" r="4.5" class="c-bad"/>
+<circle cx="856" cy="31" r="4.5" class="c-warn"/>
+<circle cx="872" cy="31" r="4.5" class="c-ok"/>
+<line x1="20" y1="46" x2="880" y2="46" class="ln" />
+<text x="36" y="66" class="ts">Compact Coach chip (appears once context passes 100k)</text>
+<rect x="36" y="74" width="828" height="38" rx="6" class="panel2" />
+<circle cx="54" cy="93" r="7" class="c-or"/>
+<rect x="70" y="81" width="81" height="24" rx="5" class="k-n" />
+<text x="79" y="97.5" class="m">CTX 350k</text>
+<text x="159" y="98" class="m">$0.07→$0.01/turn · ~8 turns</text>
+<rect x="398.1" y="81" width="104" height="24" rx="5" class="k-ok" />
+<text x="407.1" y="97.5" class="m">GOOD MOMENT</text>
+<text x="510.1" y="98" class="m">/handoff</text>
+<text x="36" y="136" class="ts">Verdict: 5 or more GOOD MOMENT, 3-4 OK, below 3 NOT NOW. Dollars are estimates, labelled with the price date.</text>
+<text x="36" y="170" class="tsb">The two-step /handoff replaces the verdict while it runs</text>
+<rect x="36" y="180" width="828" height="32" rx="6" class="k-n" />
+<text x="50" y="201" class="m">HANDOFF writing → handoff/2026-10-18-auth-refactor.md</text>
+<rect x="36" y="220" width="828" height="32" rx="6" class="k-warn" />
+<text x="50" y="241" class="m">HANDOFF ready · compaction is irreversible · /handoff go (~$0.47) or /handoff cancel</text>
+<rect x="36" y="260" width="828" height="32" rx="6" class="k-ok" />
+<text x="50" y="281" class="m">COMPACTED 351k → 41k</text>
+<text x="36" y="312" class="ts">Only you can type /handoff go. No timer, hook or toast ever compacts for you.</text>
+<text x="36" y="342" class="tsb">When a compaction's handoff is degraded</text>
+<rect x="36" y="350" width="828" height="32" rx="6" class="k-bad" />
+<text x="50" y="371" class="m">HANDOFF DEGRADED · section failed +1</text>
+<text x="36" y="402" class="ts">Also one toast: COMPACT · good moment at 350k. Saves ~$0.06/turn. Run /handoff.</text>
+<text x="24" y="488" class="cap">Illustration — not a screenshot</text>
+<text x="24" y="466" class="tsb">Commands</text>
+<rect x="100" y="450" width="65" height="24" rx="5" class="k-acc" />
+<text x="109" y="466.5" class="m">/coach</text>
+<rect x="173" y="450" width="136" height="24" rx="5" class="k-acc" />
+<text x="182" y="466.5" class="m">/handoff [slug]</text>
+<rect x="317" y="450" width="104" height="24" rx="5" class="k-acc" />
+<text x="326" y="466.5" class="m">/handoff go</text>
+<rect x="429" y="450" width="136" height="24" rx="5" class="k-acc" />
+<text x="438" y="466.5" class="m">/handoff cancel</text>
+<rect x="573" y="450" width="168" height="24" rx="5" class="k-acc" />
+<text x="582" y="466.5" class="m">/orch on|off|status</text></svg>

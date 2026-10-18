@@ -1,0 +1,186 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 840" width="900" height="840" role="img" aria-label="agents plugin: pets pane, review queue, delegation guard and mission board"><title>agents plugin: pets pane, review queue, delegation guard and mission board</title><style>
+:root{--bg:#ffffff;--panel:#f6f8fa;--panel2:#eaeef2;--line:#d0d7de;--text:#1f2328;--muted:#59636e;
+--accent:#0969da;--accent-bg:#ddf4ff;--ok:#1a7f37;--ok-bg:#dafbe1;--warn:#9a6700;--warn-bg:#fff8c5;
+--bad:#cf222e;--bad-bg:#ffebe9;--orange:#bc4c00;--orange-bg:#fff1e5}
+@media (prefers-color-scheme: dark){:root{--bg:#0d1117;--panel:#161b22;--panel2:#21262d;--line:#3d444d;--text:#e6edf3;--muted:#9198a1;
+--accent:#58a6ff;--accent-bg:#14304f;--ok:#3fb950;--ok-bg:#12351d;--warn:#d29922;--warn-bg:#3a2d0a;
+--bad:#ff7b72;--bad-bg:#45191b;--orange:#ffa657;--orange-bg:#3d2410}}
+.bg{fill:var(--bg)}.panel{fill:var(--panel);stroke:var(--line)}.panel2{fill:var(--panel2);stroke:var(--line)}
+.ln{stroke:var(--line);fill:none}.lns{stroke:var(--muted);fill:none;stroke-width:1.5}
+.t{font:14px -apple-system,'Segoe UI',Helvetica,Arial,sans-serif;fill:var(--text)}
+.tb{font:600 14px -apple-system,'Segoe UI',Helvetica,Arial,sans-serif;fill:var(--text)}
+.th{font:700 18px -apple-system,'Segoe UI',Helvetica,Arial,sans-serif;fill:var(--text)}
+.ts{font:12px -apple-system,'Segoe UI',Helvetica,Arial,sans-serif;fill:var(--muted)}
+.tsb{font:600 12px -apple-system,'Segoe UI',Helvetica,Arial,sans-serif;fill:var(--text)}
+.m{font:13px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;fill:var(--text)}
+.mm{font:13px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;fill:var(--muted)}
+.cap{font:italic 12px -apple-system,'Segoe UI',Helvetica,Arial,sans-serif;fill:var(--muted)}
+.k-n{fill:var(--panel2);stroke:var(--line)}.k-ok{fill:var(--ok-bg);stroke:var(--ok)}
+.k-warn{fill:var(--warn-bg);stroke:var(--warn)}.k-bad{fill:var(--bad-bg);stroke:var(--bad)}
+.k-acc{fill:var(--accent-bg);stroke:var(--accent)}.k-or{fill:var(--orange-bg);stroke:var(--orange)}
+.c-ok{fill:var(--ok)}.c-warn{fill:var(--warn)}.c-bad{fill:var(--bad)}.c-acc{fill:var(--accent)}.c-or{fill:var(--orange)}.c-mu{fill:var(--muted)}
+.c-line{fill:var(--line)}
+</style><rect width="900" height="840" class="bg"/><rect x="20" y="14" width="860" height="706" rx="10" class="panel" />
+<text x="36" y="36" class="tsb">Claude Code  ·  bento-demo</text>
+<circle cx="840" cy="31" r="4.5" class="c-bad"/>
+<circle cx="856" cy="31" r="4.5" class="c-warn"/>
+<circle cx="872" cy="31" r="4.5" class="c-ok"/>
+<line x1="20" y1="46" x2="880" y2="46" class="ln" />
+<text x="36" y="66" class="ts">Band row</text>
+<rect x="36" y="74" width="828" height="70" rx="6" class="panel2" />
+<text x="46" y="94" class="m">PLAN 12/50 DONE · 5 RUNNING · 31 QUEUED</text>
+<rect x="376.0" y="83" width="7" height="12" rx="1.5" class="c-acc" />
+<rect x="385.0" y="83" width="7" height="12" rx="1.5" class="c-acc" />
+<rect x="394.0" y="83" width="7" height="12" rx="1.5" class="c-acc" />
+<rect x="403.0" y="83" width="7" height="12" rx="1.5" class="c-acc" />
+<rect x="412.0" y="83" width="7" height="12" rx="1.5" class="c-acc" />
+<rect x="421.0" y="83" width="7" height="12" rx="1.5" class="c-acc" />
+<rect x="430.0" y="83" width="7" height="12" rx="1.5" class="c-line" />
+<rect x="439.0" y="83" width="7" height="12" rx="1.5" class="c-line" />
+<rect x="448.0" y="83" width="7" height="12" rx="1.5" class="c-line" />
+<rect x="457.0" y="83" width="7" height="12" rx="1.5" class="c-line" />
+<rect x="466.0" y="83" width="7" height="12" rx="1.5" class="c-line" />
+<rect x="475.0" y="83" width="7" height="12" rx="1.5" class="c-line" />
+<rect x="484.0" y="83" width="7" height="12" rx="1.5" class="c-line" />
+<rect x="493.0" y="83" width="7" height="12" rx="1.5" class="c-line" />
+<rect x="502.0" y="83" width="7" height="12" rx="1.5" class="c-line" />
+<rect x="511.0" y="83" width="7" height="12" rx="1.5" class="c-line" />
+<rect x="520.0" y="83" width="7" height="12" rx="1.5" class="c-line" />
+<rect x="529.0" y="83" width="7" height="12" rx="1.5" class="c-line" />
+<rect x="538.0" y="83" width="7" height="12" rx="1.5" class="c-line" />
+<rect x="547.0" y="83" width="7" height="12" rx="1.5" class="c-line" />
+<rect x="556.0" y="83" width="7" height="12" rx="1.5" class="c-line" />
+<rect x="565.0" y="83" width="7" height="12" rx="1.5" class="c-line" />
+<rect x="574.0" y="83" width="7" height="12" rx="1.5" class="c-line" />
+<rect x="583.0" y="83" width="7" height="12" rx="1.5" class="c-line" />
+<rect x="46" y="106" width="89" height="24" rx="5" class="k-acc" />
+<text x="55" y="122.5" class="m">5 working</text>
+<rect x="143" y="106" width="81" height="24" rx="5" class="k-warn" />
+<text x="152" y="122.5" class="m">REVIEW 3</text>
+<rect x="232" y="106" width="120" height="24" rx="5" class="k-warn" />
+<text x="241" y="122.5" class="m">⚠ NO MODEL ×2</text>
+<rect x="360" y="106" width="112" height="24" rx="5" class="k-bad" />
+<text x="369" y="122.5" class="m">⚠ RUNAWAY ×1</text>
+<text x="36" y="168" class="tsb">Pane: pets</text>
+<rect x="36" y="176" width="828" height="150" rx="6" class="panel2" />
+<rect x="46" y="186" width="57" height="22" rx="5" class="k-n" />
+<text x="55" y="202.5" class="m">BUILD</text>
+<text x="119.5" y="202" class="t">Add retry to sync client</text>
+<rect x="330" y="186" width="65" height="22" rx="5" class="k-acc" />
+<text x="339" y="202.5" class="m">SONNET</text>
+<text x="425" y="202" class="mm">general-purpose</text>
+<rect x="560" y="186" width="73" height="22" rx="5" class="k-ok" />
+<text x="569" y="202.5" class="m">WORKING</text>
+<text x="650" y="202" class="m">03:12</text>
+<rect x="46" y="216" width="57" height="22" rx="5" class="k-n" />
+<text x="55" y="232.5" class="m">SCOUT</text>
+<text x="119.5" y="232" class="t">Map auth call sites</text>
+<rect x="330" y="216" width="57" height="22" rx="5" class="k-acc" />
+<text x="339" y="232.5" class="m">HAIKU</text>
+<text x="425" y="232" class="mm">Explore</text>
+<rect x="560" y="216" width="73" height="22" rx="5" class="k-ok" />
+<text x="569" y="232.5" class="m">WORKING</text>
+<text x="650" y="232" class="m">01:05</text>
+<rect x="46" y="246" width="49" height="22" rx="5" class="k-n" />
+<text x="55" y="262.5" class="m">DOCS</text>
+<text x="111.6" y="262" class="t">Summarise changelog</text>
+<rect x="330" y="246" width="49" height="22" rx="5" class="k-acc" />
+<text x="339" y="262.5" class="m">OPUS</text>
+<text x="425" y="262" class="mm">general-purpose</text>
+<rect x="560" y="246" width="73" height="22" rx="5" class="k-ok" />
+<text x="569" y="262.5" class="m">WORKING</text>
+<text x="650" y="262" class="m">11:48 ⚠ RUNAWAY</text>
+<rect x="46" y="276" width="41" height="22" rx="5" class="k-n" />
+<text x="55" y="292.5" class="m">LAB</text>
+<text x="103.7" y="292" class="t">Write parser notes</text>
+<rect x="330" y="276" width="65" height="22" rx="5" class="k-acc" />
+<text x="339" y="292.5" class="m">SONNET</text>
+<text x="425" y="292" class="mm">general-purpose</text>
+<rect x="560" y="276" width="49" height="22" rx="5" class="k-n" />
+<text x="569" y="292.5" class="m">DONE</text>
+<text x="650" y="292" class="m">04:40</text>
+<text x="46" y="316" class="m">SPEND $9.35 · F $3.10 O $4.90 S $1.20 H $0.15</text>
+<text x="36" y="352" class="tsb">Review Queue (inside the same pane)</text>
+<rect x="36" y="360" width="828" height="92" rx="6" class="panel2" />
+<rect x="46" y="370" width="112" height="22" rx="5" class="k-ok" />
+<text x="55" y="386.5" class="m">TESTS PASSED</text>
+<text x="170.8" y="386" class="t">Refactor config loader</text>
+<text x="400" y="386" class="mm">SONNET  06:21  4 files</text>
+<rect x="740" y="370" width="81" height="22" rx="5" class="k-n" />
+<text x="749" y="386.5" class="m">REVIEWED</text>
+<rect x="46" y="398" width="81" height="22" rx="5" class="k-warn" />
+<text x="55" y="414.5" class="m">UNTESTED</text>
+<text x="139.2" y="414" class="t">Add export command</text>
+<text x="400" y="414" class="mm">SONNET  05:02  3 files</text>
+<rect x="740" y="398" width="81" height="22" rx="5" class="k-n" />
+<text x="749" y="414.5" class="m">REVIEWED</text>
+<rect x="46" y="426" width="81" height="22" rx="5" class="k-n" />
+<text x="55" y="442.5" class="m">NO EDITS</text>
+<text x="139.2" y="442" class="t">Read API docs</text>
+<text x="400" y="442" class="mm">HAIKU  02:10  0 files</text>
+<rect x="740" y="426" width="81" height="22" rx="5" class="k-n" />
+<text x="749" y="442.5" class="m">REVIEWED</text>
+<text x="36" y="486" class="tsb">Delegation Guard toast (default mode: warn)</text>
+<rect x="36" y="494" width="828" height="40" rx="6" class="k-warn" />
+<text x="50" y="519" class="m">AGENT · NO MODEL SET: "Map auth call sites" started without a model. Add model: haiku or sonnet.</text>
+<rect x="36" y="540" width="828" height="40" rx="6" class="k-bad" />
+<text x="50" y="565" class="m">AGENT RUNAWAY · "Summarise changelog" · 112 steps · 340k ctx · consider stopping it</text>
+<text x="36" y="612" class="tsb">Pane: mission  (tiles for everything left; press a count to filter)</text>
+<rect x="36" y="622" width="73" height="24" rx="5" class="k-ok" />
+<text x="45" y="638.5" class="m">DONE 12</text>
+<rect x="117" y="622" width="89" height="24" rx="5" class="k-acc" />
+<text x="126" y="638.5" class="m">RUNNING 5</text>
+<rect x="214" y="622" width="81" height="24" rx="5" class="k-warn" />
+<text x="223" y="638.5" class="m">REVIEW 2</text>
+<rect x="303" y="622" width="89" height="24" rx="5" class="k-n" />
+<text x="312" y="638.5" class="m">BLOCKED 0</text>
+<rect x="400" y="622" width="89" height="24" rx="5" class="k-n" />
+<text x="409" y="638.5" class="m">QUEUED 31</text>
+<text x="507" y="639" class="mm">step 7/10 · wiring table</text>
+<rect x="36" y="660" width="21" height="16" rx="3" class="c-ok" />
+<rect x="62" y="660" width="21" height="16" rx="3" class="c-ok" />
+<rect x="88" y="660" width="21" height="16" rx="3" class="c-ok" />
+<rect x="114" y="660" width="21" height="16" rx="3" class="c-ok" />
+<rect x="140" y="660" width="21" height="16" rx="3" class="c-ok" />
+<rect x="166" y="660" width="21" height="16" rx="3" class="c-ok" />
+<rect x="192" y="660" width="21" height="16" rx="3" class="c-ok" />
+<rect x="218" y="660" width="21" height="16" rx="3" class="c-ok" />
+<rect x="244" y="660" width="21" height="16" rx="3" class="c-ok" />
+<rect x="270" y="660" width="21" height="16" rx="3" class="c-ok" />
+<rect x="296" y="660" width="21" height="16" rx="3" class="c-ok" />
+<rect x="322" y="660" width="21" height="16" rx="3" class="c-ok" />
+<rect x="348" y="660" width="21" height="16" rx="3" class="c-acc" />
+<rect x="374" y="660" width="21" height="16" rx="3" class="c-acc" />
+<rect x="400" y="660" width="21" height="16" rx="3" class="c-acc" />
+<rect x="426" y="660" width="21" height="16" rx="3" class="c-acc" />
+<rect x="452" y="660" width="21" height="16" rx="3" class="c-acc" />
+<rect x="478" y="660" width="21" height="16" rx="3" class="c-line" />
+<rect x="504" y="660" width="21" height="16" rx="3" class="c-line" />
+<rect x="530" y="660" width="21" height="16" rx="3" class="c-line" />
+<rect x="556" y="660" width="21" height="16" rx="3" class="c-line" />
+<rect x="582" y="660" width="21" height="16" rx="3" class="c-line" />
+<rect x="608" y="660" width="21" height="16" rx="3" class="c-line" />
+<rect x="634" y="660" width="21" height="16" rx="3" class="c-line" />
+<rect x="660" y="660" width="21" height="16" rx="3" class="c-line" />
+<rect x="686" y="660" width="21" height="16" rx="3" class="c-line" />
+<rect x="712" y="660" width="21" height="16" rx="3" class="c-line" />
+<rect x="738" y="660" width="21" height="16" rx="3" class="c-line" />
+<rect x="764" y="660" width="21" height="16" rx="3" class="c-line" />
+<rect x="790" y="660" width="21" height="16" rx="3" class="c-line" />
+<text x="820" y="673" class="ts">+N more</text>
+<text x="24" y="828" class="cap">Illustration — not a screenshot</text>
+<text x="24" y="764" class="tsb">Commands</text>
+<rect x="100" y="748" width="57" height="24" rx="5" class="k-acc" />
+<text x="109" y="764.5" class="m">/pets</text>
+<rect x="165" y="748" width="128" height="24" rx="5" class="k-acc" />
+<text x="174" y="764.5" class="m">/agents-review</text>
+<rect x="301" y="748" width="199" height="24" rx="5" class="k-acc" />
+<text x="310" y="764.5" class="m">/agents-review done all</text>
+<rect x="508" y="748" width="144" height="24" rx="5" class="k-acc" />
+<text x="517" y="764.5" class="m">/delegation deny</text>
+<rect x="660" y="748" width="207" height="24" rx="5" class="k-acc" />
+<text x="669" y="764.5" class="m">/delegation nesting deny</text>
+<rect x="100" y="780" width="81" height="24" rx="5" class="k-acc" />
+<text x="109" y="796.5" class="m">/mission</text>
+<rect x="189" y="780" width="176" height="24" rx="5" class="k-acc" />
+<text x="198" y="796.5" class="m">/mission plan &lt;path&gt;</text></svg>

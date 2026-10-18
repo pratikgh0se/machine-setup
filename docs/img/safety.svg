@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 520" width="900" height="520" role="img" aria-label="safety plugin: protected-file denial, toast, status line and checkpoint list"><title>safety plugin: protected-file denial, toast, status line and checkpoint list</title><style>
+:root{--bg:#ffffff;--panel:#f6f8fa;--panel2:#eaeef2;--line:#d0d7de;--text:#1f2328;--muted:#59636e;
+--accent:#0969da;--accent-bg:#ddf4ff;--ok:#1a7f37;--ok-bg:#dafbe1;--warn:#9a6700;--warn-bg:#fff8c5;
+--bad:#cf222e;--bad-bg:#ffebe9;--orange:#bc4c00;--orange-bg:#fff1e5}
+@media (prefers-color-scheme: dark){:root{--bg:#0d1117;--panel:#161b22;--panel2:#21262d;--line:#3d444d;--text:#e6edf3;--muted:#9198a1;
+--accent:#58a6ff;--accent-bg:#14304f;--ok:#3fb950;--ok-bg:#12351d;--warn:#d29922;--warn-bg:#3a2d0a;
+--bad:#ff7b72;--bad-bg:#45191b;--orange:#ffa657;--orange-bg:#3d2410}}
+.bg{fill:var(--bg)}.panel{fill:var(--panel);stroke:var(--line)}.panel2{fill:var(--panel2);stroke:var(--line)}
+.ln{stroke:var(--line);fill:none}.lns{stroke:var(--muted);fill:none;stroke-width:1.5}
+.t{font:14px -apple-system,'Segoe UI',Helvetica,Arial,sans-serif;fill:var(--text)}
+.tb{font:600 14px -apple-system,'Segoe UI',Helvetica,Arial,sans-serif;fill:var(--text)}
+.th{font:700 18px -apple-system,'Segoe UI',Helvetica,Arial,sans-serif;fill:var(--text)}
+.ts{font:12px -apple-system,'Segoe UI',Helvetica,Arial,sans-serif;fill:var(--muted)}
+.tsb{font:600 12px -apple-system,'Segoe UI',Helvetica,Arial,sans-serif;fill:var(--text)}
+.m{font:13px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;fill:var(--text)}
+.mm{font:13px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;fill:var(--muted)}
+.cap{font:italic 12px -apple-system,'Segoe UI',Helvetica,Arial,sans-serif;fill:var(--muted)}
+.k-n{fill:var(--panel2);stroke:var(--line)}.k-ok{fill:var(--ok-bg);stroke:var(--ok)}
+.k-warn{fill:var(--warn-bg);stroke:var(--warn)}.k-bad{fill:var(--bad-bg);stroke:var(--bad)}
+.k-acc{fill:var(--accent-bg);stroke:var(--accent)}.k-or{fill:var(--orange-bg);stroke:var(--orange)}
+.c-ok{fill:var(--ok)}.c-warn{fill:var(--warn)}.c-bad{fill:var(--bad)}.c-acc{fill:var(--accent)}.c-or{fill:var(--orange)}.c-mu{fill:var(--muted)}
+.c-line{fill:var(--line)}
+</style><rect width="900" height="520" class="bg"/><rect x="20" y="14" width="860" height="436" rx="10" class="panel" />
+<text x="36" y="36" class="tsb">Claude Code  ·  bento-demo</text>
+<circle cx="840" cy="31" r="4.5" class="c-bad"/>
+<circle cx="856" cy="31" r="4.5" class="c-warn"/>
+<circle cx="872" cy="31" r="4.5" class="c-ok"/>
+<line x1="20" y1="46" x2="880" y2="46" class="ln" />
+<text x="36" y="66" class="ts">A protected edit is refused. This is what the model reads:</text>
+<rect x="36" y="76" width="828" height="78" rx="6" class="k-bad" />
+<text x="50" y="98" class="m">Edit(.env.local)  →  denied</text>
+<text x="50" y="120" class="m">Protected file: .env.local (may hold secrets). Edit blocked by the safety plugin. ... To allow it</text>
+<text x="50" y="137" class="m">once, ask the user to run: /protect allow .env.local 10m</text>
+<text x="36" y="182" class="ts">And you get one toast per path per 30 seconds:</text>
+<rect x="36" y="192" width="560" height="40" rx="6" class="k-warn" />
+<text x="50" y="217" class="m">FILE PROTECTED · Edit blocked: .env.local is a secrets file.</text>
+<text x="36" y="262" class="ts">Status line under the prompt (there is no band row):</text>
+<rect x="36" y="272" width="828" height="32" rx="6" class="panel2" />
+<text x="50" y="293" class="m">protect: deny · 2 blocked · checkpoint #12 3 min ago</text>
+<text x="36" y="332" class="tsb">/checkpoint list</text>
+<rect x="36" y="342" width="828" height="86" rx="6" class="panel2" />
+<text x="50" y="363" class="m">#12  14:02  +34 -8   3 files</text>
+<text x="50" y="382" class="m">#11  13:48  +120 -41  7 files</text>
+<text x="50" y="401" class="m">#10  13:20  +6 -0    1 file</text>
+<text x="430" y="363" class="mm">/checkpoint diff 3</text>
+<text x="430" y="382" class="mm">/checkpoint restore 3 src/app.ts</text>
+<text x="430" y="401" class="ts">(prints the git restore command, never runs it)</text>
+<text x="36" y="446" class="t"></text>
+<text x="24" y="508" class="cap">Illustration — not a screenshot</text>
+<text x="24" y="480" class="tsb">Commands:</text>
+<rect x="100" y="464" width="81" height="24" rx="5" class="k-acc" />
+<text x="109" y="480.5" class="m">/protect</text>
+<rect x="189" y="464" width="215" height="24" rx="5" class="k-acc" />
+<text x="198" y="480.5" class="m">/protect allow &lt;path&gt; 10m</text>
+<rect x="412" y="464" width="168" height="24" rx="5" class="k-acc" />
+<text x="421" y="480.5" class="m">/protect add &lt;glob&gt;</text>
+<rect x="588" y="464" width="104" height="24" rx="5" class="k-acc" />
+<text x="597" y="480.5" class="m">/checkpoint</text>
+<rect x="700" y="464" width="136" height="24" rx="5" class="k-acc" />
+<text x="709" y="480.5" class="m">/checkpoint now</text></svg>
