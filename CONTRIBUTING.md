@@ -39,7 +39,7 @@ Use the typings of the Claude Code version you target; type errors that appear o
 ## Running the contract tests (maintainers)
 
 ```
-export BENTO_TESTS_DIR=/path/to/the/private/tests/repo   # folder with one subfolder per plugin
+export BENTO_TESTS_DIR=~/CodeBase/bento-mods-tests   # clone of github.com/pratikgh0se/bento-mods-tests; one subfolder per plugin
 scripts/run-contract.sh <plugin>                        # safety | usage | awareness | agents | dev | compact
 ```
 

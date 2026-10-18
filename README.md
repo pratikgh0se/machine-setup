@@ -89,7 +89,7 @@ Behaviour is specified before it is coded, in [`specs/`](specs/): [conventions](
 
 ## How it is tested
 
-Plugins are tested with "code-blind" contract tests: one agent writes tests from the spec without seeing the code, another writes the code without seeing the tests, and a referee reads both and writes separate briefs when they disagree. The tests live in a separate private repository, so the public checks are `claude plugin validate` and `tsc`. The process, with its limits, is described in [`docs/code-blind-tdd.md`](docs/code-blind-tdd.md). See [`CONTRIBUTING.md`](CONTRIBUTING.md) for how to run what you can.
+Plugins are tested with "code-blind" contract tests: one agent writes tests from the spec without seeing the code, another writes the code without seeing the tests, and a referee reads both and writes separate briefs when they disagree. The tests live in a separate public repository, [pratikgh0se/bento-mods-tests](https://github.com/pratikgh0se/bento-mods-tests) (about 2,100 tests across nine suites); CI here runs `claude plugin validate` and `tsc`. The process, with its limits, is described in [`docs/code-blind-tdd.md`](docs/code-blind-tdd.md). See [`CONTRIBUTING.md`](CONTRIBUTING.md) for how to run what you can.
 
 ## Known limitations
 
