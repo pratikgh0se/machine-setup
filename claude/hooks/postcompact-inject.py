@@ -64,53 +64,27 @@ def write_degraded(sid, codes, trigger):
 
 
 PREFIX = "Pre-compaction handoff (auto-saved):\n"
-PREFIX2 = "Pre-compaction handoff (auto-saved, part 2):\n"
-PART = 2 if sys.argv[1:3] == ["--part", "2"] else 1  # no arg = part 1 (old installs keep working)
-LIMIT = 10000   # additionalContext must stay under this (Claude Code spills larger values to a file)
-INLINE_MAX = 9700  # F37.3: cut target, leaves room for the continuation line
+LIMIT = 10000      # additionalContext of ONE hook must stay under this (Claude Code spills larger values to a file)
+HARD_MAX = 9900    # each part's total output (warning + header + content + continuation line) stays <= this
+INLINE_MAX = 9700  # content target per part
+NAMES_MAX = 150    # the section-name list in a continuation line is cut to this many chars
+MAX_PARTS = 3      # F37.6
+try:
+    _a = sys.argv[1:]
+    PART = int(_a[_a.index("--part") + 1]) if "--part" in _a else 1  # no arg = part 1 (old installs keep working)
+except Exception:
+    PART = 1
+if PART not in (1, 2, 3):
+    PART = 1
 
 
-def split_part1(first, txt, path):
-    """F37.3: returns (inlined, rest). rest == "" when everything fits under LIMIT (no cut)."""
-    head = first + PREFIX
-    if len(head) + len(txt) < LIMIT:
-        return txt, ""
-    budget = _budget(len(head), path, True)
-    heads = [m.start() for m in re.finditer(r"(?m)^## ", txt)]
-    # the agent (or Haiku) section must lie wholly inside the inlined part
-    need = 1
-    am = re.search(r"(?m)^## (Agent handoff|Model-written handoff)", txt)
-    if am:
-        # the agent body has its own "## Goal" ... "## Exact next step" headings (F35.A); they are
-        # part of the agent section, which ends at the first other heading
-        inner = ("Goal", "Decisions and why", "Done", "In progress", "Dead ends", "Exact next step")
-        nxt = [m.start() for m in re.finditer(r"(?m)^## (.+?)\s*$", txt)
-               if m.start() > am.start() and m.group(1) not in inner]
-        need = nxt[0] if nxt else len(txt) + 1
-    fit = [h for h in heads if need <= h <= budget]
-    if fit:
-        cut = max(fit)  # last whole-section boundary that fits
-    else:  # header + agent section do not fit: last line boundary that fits
-        nl = txt.rfind("\n", 0, budget + 1)
-        cut = nl + 1 if nl > 0 else max(budget, 0)
-    inl = txt[:cut].rstrip("\n")
-    return inl, txt[len(inl):]
+def header(k, first=""):
+    return first + PREFIX if k == 1 else f"Pre-compaction handoff (auto-saved, part {k}):\n"
 
 
-HARD_MAX = 9900     # each part's total output (warning + header + content + continuation line) stays <= this
-NAMES_MAX = 250     # the section-name list in a continuation line is cut to this many chars
-
-
-def _line(rest_len, names, path, p1):
-    where = f"part 2 below and in {path}" if p1 else path
-    return f"[Handoff continues in {where}: {rest_len} more chars (sections: {names}). Read it before acting.]"
-
-
-def _budget(head_len, path, p1):
-    """Max chars of content that may be inlined: the continuation line is sized for its worst case
-    (8-digit N, full-length names list) BEFORE content is fitted, so the total can never pass HARD_MAX."""
-    worst = len(_line(99999999, "x" * (NAMES_MAX + 5), path, p1))
-    return min(INLINE_MAX - head_len, HARD_MAX - head_len - 1 - worst)
+def cont_line(k, n, names, path):
+    where = f"part {k + 1} below and in {path}" if k < MAX_PARTS else path
+    return f"[Handoff continues in {where}: {n} more chars (sections: {names}). Read it before acting.]"
 
 
 def names_of(rest):
@@ -126,32 +100,44 @@ def names_of(rest):
     return out
 
 
-def part1(first, txt, path):
-    inl, rest = split_part1(first, txt, path)
-    out = first + PREFIX + inl
-    if rest:
-        out += "\n" + _line(len(rest), names_of(rest), path, True)
-    return out
+def agent_end(txt):
+    """Index where the agent (or Haiku) section ends; 1 when there is none. Its own F35.A headings
+    (## Goal ... ## Exact next step) belong to it."""
+    am = re.search(r"(?m)^## (Agent handoff|Model-written handoff)", txt)
+    if not am:
+        return 1
+    inner = ("Goal", "Decisions and why", "Done", "In progress", "Dead ends", "Exact next step")
+    nxt = [m.start() for m in re.finditer(r"(?m)^## (.+?)\s*$", txt)
+           if m.start() > am.start() and m.group(1) not in inner]
+    return nxt[0] if nxt else len(txt) + 1
 
 
-def part2(first, txt, path):
-    """F37.5: remaining content from the next whole section; None when nothing is left."""
-    inl, rest = split_part1(first, txt, path)
-    rest = rest.lstrip("\n")
-    if not rest:
-        return None
-    if len(PREFIX2) + len(rest) < LIMIT:
-        return PREFIX2 + rest.rstrip("\n")
-    budget = _budget(len(PREFIX2), path, False)
-    fit = [m.start() for m in re.finditer(r"(?m)^## ", rest) if 0 < m.start() <= budget]
-    if fit:
-        cut = max(fit)
-    else:
-        nl = rest.rfind("\n", 0, budget + 1)
-        cut = nl + 1 if nl > 0 else max(budget, 0)
-    inl2 = rest[:cut].rstrip("\n")
-    left = rest[len(inl2):]
-    return PREFIX2 + inl2 + "\n" + _line(len(left), names_of(left), path, False)
+def render(first, txt, path):
+    """F37.3/F37.5/F37.6: list of up to MAX_PARTS additionalContext strings. Part 1 equals the plain
+    section 6 string when it fits under LIMIT. Every part is <= HARD_MAX chars."""
+    parts, rest = [], txt
+    for k in range(1, MAX_PARTS + 1):
+        head = header(k, first)
+        if len(head) + len(rest) < LIMIT:
+            parts.append(head + rest)
+            return parts
+        # reserve the continuation line first (N has at most len(str(len(rest))) digits), then fit content
+        reserve = len(cont_line(k, "9" * len(str(len(rest))), "x" * NAMES_MAX, path)) + 1
+        budget = min(INLINE_MAX - len(head), HARD_MAX - len(head) - reserve)
+        need = agent_end(rest) if k == 1 else 1
+        fit = [m.start() for m in re.finditer(r"(?m)^## ", rest) if need <= m.start() <= budget]
+        if fit:
+            cut = max(fit)  # last whole-section boundary that fits
+        else:  # no whole section fits (oversize section / agent section): last line boundary
+            nl = rest.rfind("\n", 0, budget + 1)
+            cut = nl + 1 if nl > 0 else max(budget, 0)
+        inl = rest[:cut].rstrip("\n")
+        left = rest[len(inl):]
+        parts.append(head + inl + "\n" + cont_line(k, len(left), names_of(left), path))
+        rest = left.lstrip("\n")
+        if not rest:  # (cannot normally happen: the loop only cuts when content overflowed)
+            return parts
+    return parts
 
 
 def emit(ctx):
@@ -195,15 +181,11 @@ try:
                         codes.append("handoff_old")
                 first = ("HANDOFF DEGRADED: " + warning_text(codes, errs)
                          + ". Verify the handoff against the transcript before acting.\n") if codes else ""
-                ap = os.path.abspath(p)
-                if PART == 2:  # part 2 only continues the content; the warning and the degraded file belong to part 1
-                    o2 = part2(first, txt, ap)
-                    if o2:
-                        emit(o2)
-                else:
-                    if codes:
-                        write_degraded(sid, codes, trig)
-                    emit(part1(first, txt, ap))
+                if PART == 1 and codes:  # the warning and the degraded file belong to part 1
+                    write_degraded(sid, codes, trig)
+                outs = render(first, txt, os.path.abspath(p))
+                if len(outs) >= PART:
+                    emit(outs[PART - 1])
         except SystemExit:
             raise
         except BaseException:
