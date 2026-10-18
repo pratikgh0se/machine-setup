@@ -31,7 +31,8 @@
       {
         "matcher": "compact",
         "hooks": [
-          { "type": "command", "command": "python3 __HOME__/.claude/hooks/postcompact-inject.py", "timeout": 10 }
+          { "type": "command", "command": "python3 __HOME__/.claude/hooks/postcompact-inject.py --part 1", "timeout": 10 },
+          { "type": "command", "command": "python3 __HOME__/.claude/hooks/postcompact-inject.py --part 2", "timeout": 10 }
         ]
       }
     ],

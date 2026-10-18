@@ -6,7 +6,7 @@ if os.environ.get("HANDOFF_HOOK_CHILD"):  # spawned by our own Haiku fallback: n
     sys.exit(0)
 
 _T0 = time.monotonic()
-HOOK_VERSION = "1.1.0"
+HOOK_VERSION = "1.2.0"
 HOME = os.path.expanduser("~")
 HANDOFFS_DIR = (os.environ.get("HANDOFF_STATE_DIR") or "").strip() or os.path.join(HOME, ".local", "state", "claude-handoffs")
 HEALTH_FILE = os.path.join(HANDOFFS_DIR, "health.jsonl")
@@ -14,7 +14,8 @@ HEALTH_MAX_LINES = 5000
 SECTION_NAMES = ["warning", "agent", "fallback", "user_messages", "decisions", "files", "tasks",
                  "open_tasks", "background_agents", "git", "bash", "assistant"]
 FAULTS = {x.strip() for x in (os.environ.get("HANDOFF_TEST_FAULT") or "").split(",") if x.strip()}
-CAP = 9500  # <10k so SessionStart additionalContext is not spilled to a file by Claude Code
+CAP = 20000  # F37.1: file cap. The inject hook inlines at most ~9,700 chars and points at the file for the rest.
+INJECT_PREFIX = "Pre-compaction handoff (auto-saved):\n"  # same literal as postcompact-inject.py
 
 
 def trunc(s, n):
@@ -485,7 +486,8 @@ def _f_asst(P, cwd):
 FACTS = [("users", "user_messages", _f_users), ("qa", "decisions", _f_qa), ("files", "files", _f_files),
          ("tasks", "tasks", _f_tasks), ("open", "open_tasks", _f_open), ("bg", "background_agents", _f_bg),
          ("git", "git", _f_git), ("cmds", "bash", _f_cmds), ("asst", "assistant", _f_asst)]
-DROP_ORDER = ["users", "files", "tasks", "git", "cmds", "asst", "bg", "open", "qa"]
+# F37.2: the user's own words (users) go last
+DROP_ORDER = ["files", "cmds", "git", "tasks", "asst", "bg", "open", "qa", "users"]
 
 
 def build(d, info):
@@ -709,6 +711,7 @@ def write_health(d, sid, info, body):
         "duration_ms": int((time.monotonic() - _T0) * 1000),
         "output_chars": len(body),
         "truncated": bool(info["truncated"]),
+        "inline_cut": len(INJECT_PREFIX) + len(body.strip()) >= 10000,  # F37.4 prediction
         "errors": info["errors"],
         "status": status,
         "hook_version": HOOK_VERSION,

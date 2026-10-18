@@ -2,7 +2,7 @@
 """SessionStart(compact) hook: re-inject the pre-compaction handoff. Silent on any problem,
 except a DEGRADED handoff, which is flagged to the model (first line) and recorded in
 <sid>-degraded.json for the compact plugin."""
-import datetime, json, os, sys, time
+import datetime, json, os, re, sys, time
 
 HANDOFFS_DIR = (os.environ.get("HANDOFF_STATE_DIR") or "").strip() or os.path.join(
     os.path.expanduser("~"), ".local", "state", "claude-handoffs")
@@ -63,6 +63,79 @@ def write_degraded(sid, codes, trigger):
         pass
 
 
+PREFIX = "Pre-compaction handoff (auto-saved):\n"
+PREFIX2 = "Pre-compaction handoff (auto-saved, part 2):\n"
+PART = 2 if sys.argv[1:3] == ["--part", "2"] else 1  # no arg = part 1 (old installs keep working)
+LIMIT = 10000   # additionalContext must stay under this (Claude Code spills larger values to a file)
+INLINE_MAX = 9700  # F37.3: cut target, leaves room for the continuation line
+
+
+def split_part1(first, txt):
+    """F37.3: returns (inlined, rest). rest == "" when everything fits under LIMIT (no cut)."""
+    head = first + PREFIX
+    if len(head) + len(txt) < LIMIT:
+        return txt, ""
+    budget = INLINE_MAX - len(head)
+    heads = [m.start() for m in re.finditer(r"(?m)^## ", txt)]
+    # the agent (or Haiku) section must lie wholly inside the inlined part
+    need = 1
+    am = re.search(r"(?m)^## (Agent handoff|Model-written handoff)", txt)
+    if am:
+        # the agent body has its own "## Goal" ... "## Exact next step" headings (F35.A); they are
+        # part of the agent section, which ends at the first other heading
+        inner = ("Goal", "Decisions and why", "Done", "In progress", "Dead ends", "Exact next step")
+        nxt = [m.start() for m in re.finditer(r"(?m)^## (.+?)\s*$", txt)
+               if m.start() > am.start() and m.group(1) not in inner]
+        need = nxt[0] if nxt else len(txt) + 1
+    fit = [h for h in heads if need <= h <= budget]
+    if fit:
+        cut = max(fit)  # last whole-section boundary that fits
+    else:  # header + agent section do not fit: last line boundary that fits
+        nl = txt.rfind("\n", 0, budget + 1)
+        cut = nl + 1 if nl > 0 else max(budget, 0)
+    inl = txt[:cut].rstrip("\n")
+    return inl, txt[len(inl):]
+
+
+def names_of(rest):
+    names = []
+    for m in re.finditer(r"(?m)^## (.+)$", rest):
+        nm = re.sub(r"\s*\(.*$", "", m.group(1)).strip()
+        if nm and nm not in names:
+            names.append(nm)
+    return ", ".join(names) if names else "rest of file"
+
+
+def part1(first, txt, path):
+    inl, rest = split_part1(first, txt)
+    out = first + PREFIX + inl
+    if rest:
+        out += (f"\n[Handoff continues in part 2 below and in {path}: {len(rest)} more chars "
+                f"(sections: {names_of(rest)}). Read it before acting.]")
+    return out
+
+
+def part2(first, txt, path):
+    """F37.5: remaining content from the next whole section; None when nothing is left."""
+    inl, rest = split_part1(first, txt)
+    rest = rest.lstrip("\n")
+    if not rest:
+        return None
+    if len(PREFIX2) + len(rest) < LIMIT:
+        return PREFIX2 + rest.rstrip("\n")
+    budget = INLINE_MAX - len(PREFIX2)
+    fit = [m.start() for m in re.finditer(r"(?m)^## ", rest) if 0 < m.start() <= budget]
+    if fit:
+        cut = max(fit)
+    else:
+        nl = rest.rfind("\n", 0, budget + 1)
+        cut = nl + 1 if nl > 0 else max(budget, 0)
+    inl2 = rest[:cut].rstrip("\n")
+    left = rest[len(inl2):]
+    return (PREFIX2 + inl2 + f"\n[Handoff continues in {path}: {len(left)} more chars "
+            f"(sections: {names_of(left)}). Read it before acting.]")
+
+
 def emit(ctx):
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": ctx}}))
 
@@ -80,11 +153,13 @@ try:
                 txt = open(p, encoding="utf-8", errors="replace").read().strip()
             except Exception:
                 txt = ""
-        plain = "Pre-compaction handoff (auto-saved):\n" + txt
+        plain = PREFIX + txt
         try:
             S = read_json(os.path.join(HANDOFFS_DIR, f"{sid}-last-health.json"))
             trig = S.get("trigger") if S else "unknown"
             if not txt:
+                if PART == 2:
+                    raise SystemExit(0)
                 write_degraded(sid, ["handoff_missing"], trig)
                 emit("HANDOFF DEGRADED: no handoff file for this session. "
                      "Read the transcript (see session metadata) before acting.")
@@ -100,15 +175,22 @@ try:
                             codes = ["no_health"]
                     if not age_ok(S["ts"]):
                         codes.append("handoff_old")
-                if codes:
-                    write_degraded(sid, codes, trig)
-                    emit("HANDOFF DEGRADED: " + warning_text(codes, errs)
-                         + ". Verify the handoff against the transcript before acting.\n" + plain)
+                first = ("HANDOFF DEGRADED: " + warning_text(codes, errs)
+                         + ". Verify the handoff against the transcript before acting.\n") if codes else ""
+                ap = os.path.abspath(p)
+                if PART == 2:  # part 2 only continues the content; the warning and the degraded file belong to part 1
+                    o2 = part2(first, txt, ap)
+                    if o2:
+                        emit(o2)
                 else:
-                    emit(plain)
+                    if codes:
+                        write_degraded(sid, codes, trig)
+                    emit(part1(first, txt, ap))
+        except SystemExit:
+            raise
         except BaseException:
-            if txt:
-                emit(plain)
+            if txt and PART == 1:
+                emit(plain)  # last resort: section 6 behaviour (uncut)
 except BaseException:
     pass
 sys.exit(0)
