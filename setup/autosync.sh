@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# autosync.sh: daily pull, export, commit, push of the public repo and the private overlay (launchd job: <prefix>.machine-setup-autosync).
+# autosync.sh: daily pull, export, commit of the public repo (held locally for review: publish with setup/publish.sh --push) and commit+push of the private overlay (launchd job: <prefix>.machine-setup-autosync).
 # No overlay configured: logs it and exits 0 (nothing to sync). Any failure sends a macOS notification and exits non-zero;
 # nothing is committed in either repo if export (including its secret/leak scans) fails. Overlay: see lib/overlay.sh.
 set -uo pipefail
@@ -29,7 +29,7 @@ else log "overlay is not a git repo; skipping its git steps"; fi
 
 MACHINE_SETUP_PRIVATE="$OVERLAY" "$ROOT/export.sh" >>"$LOG" 2>&1 || fail export
 
-COMMIT_FAIL=0; PUSH_PUB=0; PUSH_OV=0
+COMMIT_FAIL=0; PUSH_OV=0
 # commit_repo DIR NAME : commit pending changes; sets the matching PUSH_* flag
 commit_repo() {
   local dir="$1" name="$2" n
@@ -44,13 +44,18 @@ commit_repo() {
   n="$(git -C "$dir" diff --cached --name-only | wc -l | tr -d ' ')"
   git -C "$dir" commit -q -m "autosync: $(date +%Y-%m-%d) ($n files)" >>"$LOG" 2>&1 || { COMMIT_FAIL=1; log "commit failed ($name)"; return 0; }
   log "committed $n files ($name)"
-  if [ "$name" = public ]; then PUSH_PUB=1; else PUSH_OV=1; fi
+  if [ "$name" != public ]; then PUSH_OV=1; fi
 }
 commit_repo "$REPO" public
 if [ $OV_GIT -eq 1 ]; then commit_repo "$OVERLAY" overlay; fi
 
 PUSH_FAIL=0
-if [ $PUSH_PUB -eq 1 ]; then if git -C "$REPO" push >>"$LOG" 2>&1; then log "pushed (public)"; else log "push failed (public)"; PUSH_FAIL=1; fi; fi
+# Public push gate (AC 87-90): the public repo is never pushed here; the user reviews and runs setup/publish.sh --push.
+K="$(git -C "$REPO" rev-list --count '@{u}..HEAD' 2>/dev/null || echo 0)"
+if [ "${K:-0}" -gt 0 ]; then
+  log "public push held for review ($K unpushed)"
+  osascript -e "display notification \"machine-setup: $K public commit(s) awaiting review\" with title \"machine-setup\"" >/dev/null 2>&1 || true
+fi
 if [ $PUSH_OV -eq 1 ]; then if git -C "$OVERLAY" push >>"$LOG" 2>&1; then log "pushed (overlay)"; else log "push failed (overlay)"; PUSH_FAIL=1; fi; fi
 [ $COMMIT_FAIL -eq 1 ] && fail commit
 [ $PUSH_FAIL -eq 1 ] && fail push

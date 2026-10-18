@@ -48,6 +48,8 @@ Every plugin spends no tokens on its own (the few model-visible additions are li
 
 This repository is the generic, public half of a personal setup. Everything specific to one person's machine (exact settings, repo lists, personal launchd jobs, vendored third-party skills, private notes tooling) lives in a private overlay repository applied on top. [`OVERLAY.md`](OVERLAY.md) lists what stays out and why, and which public template replaces each private file. Fork this repo and add your own overlay the same way; do not commit personal data here (`setup/secret-scan.sh` guards exports). Setup details: see [`setup/README.md`](setup/README.md).
 
+Autosync commits this repo locally and never pushes it; after review you publish with `setup/publish.sh --push`.
+
 ## Specs
 
 Behaviour is specified before it is coded, in [`specs/`](specs/): [conventions](specs/00-conventions.md) and one spec per plugin ([safety](specs/safety.md), [usage](specs/usage.md), [awareness](specs/awareness.md), [agents](specs/agents.md) with [Mission Board](specs/mission-board.md), [dev](specs/dev.md), [compact](specs/compact.md)). Where a plugin README and its spec disagree, the code and `plugin.json` are the truth.

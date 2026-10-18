@@ -1,11 +1,11 @@
 # machine-setup: behaviour contract
 
-Scope: `setup/bootstrap.sh`, `setup/export.sh`, `setup/autosync.sh`, `setup/secret-scan.sh`, `setup/leak-scan.sh`, `setup/lib/*` (scrub_settings.py, regex_scan.py, hookpaths.py, plugins.py, merge_settings.py, ...), `.secret-scan-allow`, `.leak-scan-allow`, `setup/githooks/pre-commit`, the generic templates (`claude/`, `launchd/*.plist.tmpl`), `OVERLAY.md`, README, and the private-overlay mechanism (section 11).
+Scope: `setup/bootstrap.sh`, `setup/export.sh`, `setup/autosync.sh`, `setup/publish.sh`, `setup/secret-scan.sh`, `setup/leak-scan.sh`, `setup/lib/*` (scrub_settings.py, regex_scan.py, hookpaths.py, plugins.py, merge_settings.py, ...), `.secret-scan-allow`, `.leak-scan-allow`, `setup/githooks/pre-commit`, the generic templates (`claude/`, `launchd/*.plist.tmpl`), `OVERLAY.md`, README, and the private-overlay mechanism (section 11).
 For a code-blind tester. Describes behaviour only. Platform: macOS (uses `sed -i ''`, `stat -f`, `plutil`, `launchctl`, `osascript`).
 
 Layout of the public repo (generic, no personal value):
 ```
-setup/            bootstrap.sh export.sh autosync.sh secret-scan.sh leak-scan.sh lib/ githooks/pre-commit
+setup/            bootstrap.sh export.sh autosync.sh publish.sh secret-scan.sh leak-scan.sh lib/ githooks/pre-commit
 claude/           CLAUDE.md.template  settings.template.json  settings.template.md (documentation, never installed)  hooks/ (generic hooks)
 launchd/          *.plist.tmpl  (generic job templates)
 OVERLAY.md        what lives in the private overlay instead
@@ -257,8 +257,9 @@ Personal values go ONLY to the overlay; the public repo changes only for generic
 ### 11.8 Leak guard: `setup/leak-scan.sh`
 Purpose: prevent personal values entering the public repo. Used by `setup/githooks/pre-commit` (public repo), by `export.sh`, and by CI.
 
-Usage: `setup/leak-scan.sh [--root DIR] [--denylist FILE|--no-denylist] [--require-denylist] [--staged]`.
+Usage: `setup/leak-scan.sh [--root DIR] [--denylist FILE|--no-denylist] [--require-denylist] [--staged|--range REVRANGE]`.
 - `--root` default: the public repo root (parent of `setup/`). Files = `git ls-files -co --exclude-standard` in a work tree, else all files except `.git`. `--staged`: only staged files, content read from the index. Binary files (NUL in first 4 KB), symlinks, non-files skipped; lines cut at 4000 chars.
+- `--range <rev-range>` (used by `publish.sh`): applies the same rules to the lines added by `git diff <rev-range>` (changed files only, content of other lines ignored, line numbers refer to the post-range file); a bad range is a usage error (exit 2); gitleaks is not run.
 - Denylist file, first found: `--denylist FILE`; else `<overlay>/leak-denylist.txt` (overlay per 11.2); else none. `--no-denylist` forces none. Output line `leak-scan: denylist: <M> entries` or `leak-scan: denylist: none`. CI runs without overlay, so denylist-based protection is local only (pre-commit, export, autosync).
 - Denylist format: one term per line, `#` comments and blank lines ignored, case-insensitive fixed-string match; a line starting `re:` is a case-insensitive extended regex. Terms are matched against file CONTENT and file PATHS.
 - Rules (the `<rule>` token in output; `home-path` and `uuid` have NO built-in exemptions, so any legitimate occurrence, e.g. a doc example, needs an allow entry below):
@@ -348,3 +349,10 @@ Leak scan (fixture tree in a temp git repo; outputs checked with grep; every fin
 Found live: under launchd the canary logged `skip` / `claude_missing` because the job environment had no Homebrew path (`bash -lc` does not source zsh profiles). Rule:
 85. Every public launchd template (`launchd/*.plist.tmpl`) sets `EnvironmentVariables` with `HOME` = `__HOME__` and `PATH` = `__HOME__/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`; the rendered plist passes `plutil -lint` and contains no `__` tokens. Bootstrap re-installs a job whose installed plist lacks that PATH (it counts as "plist differs").
 86. Each launchd entry script (`tools/handoff-canary/run.sh`, `tools/token-budget/run.sh`, `setup/autosync.sh`) exports `USER` and `LOGNAME` as `id -un` when they are unset or empty, before running anything else, and never overrides a non-empty value. Found live 2026-10-16: with no `USER`, `claude -p` reports "Not logged in" (Keychain lookup), so the canary would fail with `error` in a bare env.
+
+### Public push gate (approved by the user 2026-10-18)
+Found live 2026-10-16: autosync committed and pushed an unreviewed working-tree edit to the public repo at 21:00. Rule: autosync never pushes the public repo; the user publishes after reviewing. The overlay (private) keeps pushing as before. This amends 8 and 11.7 (the `push` step for `public`) and AC 30/33 for the public repo only.
+87. Autosync with a public-repo change: exactly one new local commit in the public repo (subject as AC 30), origin of the public repo unchanged (`git rev-parse origin-bare/HEAD` equal before and after), log contains `committed <N> files (public)` and `public push held for review (<K> unpushed)` where K = `git rev-list --count @{u}..HEAD`; exit 0; one notification via `osascript` whose text contains `machine-setup: <K> public commit(s) awaiting review` (title `machine-setup`). The overlay change in the same run is committed and pushed as in AC 30 (`pushed (overlay)`).
+88. Autosync with no public change but K > 0 unpushed public commits from an earlier run: no new public commit, log contains `public push held for review (<K> unpushed)`, the same notification is sent; with K = 0 no such line and no notification.
+89. `setup/publish.sh` (new): with no unpushed public commits prints `nothing to publish` and exits 0. With K > 0 and no arguments: prints `git log --oneline @{u}..HEAD` and `git diff --stat @{u}..HEAD` of the public repo, prints `run setup/publish.sh --push to publish`, pushes nothing, exits 0. With `--push`: runs `setup/leak-scan.sh` over the commits to be pushed (the same rules as the pre-commit hook, applied to `git diff @{u}..HEAD`); on a scan failure prints the findings, pushes nothing, exits 1; otherwise `git push`, prints `published <K> commit(s)`, exits 0; a failed push exits 1 with the git error. It never touches the overlay. Unknown argument: usage on stderr, exit 2.
+90. `README.md` and `setup/README.md` describe the gate in one sentence each: autosync commits the public repo locally and the user publishes with `setup/publish.sh --push` after review.

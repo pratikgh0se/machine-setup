@@ -21,7 +21,7 @@ MAXLINE = 4000
 
 def usage(msg):
     sys.stderr.write("leak-scan: %s\n" % msg)
-    sys.stderr.write("usage: leak-scan.sh [--root DIR] [--denylist FILE|--no-denylist] [--require-denylist] [--staged]\n")
+    sys.stderr.write("usage: leak-scan.sh [--root DIR] [--denylist FILE|--no-denylist] [--require-denylist] [--staged|--range REVRANGE]\n")
     sys.exit(2)
 
 
@@ -42,10 +42,28 @@ def git(root, *args):
     return subprocess.run(["git", "-C", root] + list(args), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
 
 
-def list_files(root, staged):
+def list_files(root, staged, rng=None):
     """Returns [(rel, reader)] where reader() gives bytes or None (skip)."""
     out = []
     in_git = git(root, "rev-parse", "--is-inside-work-tree").returncode == 0
+    if rng:
+        if not in_git:
+            usage("--range needs a git work tree")
+        r = git(root, "diff", "--name-only", "--diff-filter=ACMR", "-z", "--relative", rng)
+        if r.returncode != 0:
+            usage("--range: bad revision range")
+        for n in sorted(x.decode("utf-8", "replace") for x in r.stdout.split(b"\0") if x):
+            def rd(n=n):  # added lines only; other lines blanked so line numbers stay true
+                d = git(root, "diff", "-U0", "--no-color", "--no-ext-diff", rng, "--", n).stdout.decode("utf-8", "replace")
+                lines, cur = [], 0
+                for l in d.split("\n"):
+                    m = re.match(r"@@ -\S+ \+(\d+)", l)
+                    if m: cur = int(m.group(1)); continue
+                    if cur and l.startswith("+") and not l.startswith("+++"):
+                        lines.extend([""] * (cur - 1 - len(lines))); lines.append(l[1:]); cur += 1
+                return "\n".join(lines).encode()
+            out.append((n, rd))
+        return out
     if staged:
         if not in_git:
             usage("--staged needs a git work tree")
@@ -126,11 +144,12 @@ def load_allow(path):
 
 def main():
     argv = sys.argv[1:]
-    root = None; denyfile = None; nodeny = False; require = False; staged = False
+    root = None; denyfile = None; nodeny = False; require = False; staged = False; rng = None
     i = 0
     while i < len(argv):
         a = argv[i]
         if a == "--root" and i + 1 < len(argv): root = argv[i + 1]; i += 2; continue
+        if a == "--range" and i + 1 < len(argv): rng = argv[i + 1]; i += 2; continue
         if a == "--denylist" and i + 1 < len(argv): denyfile = argv[i + 1]; i += 2; continue
         if a == "--no-denylist": nodeny = True
         elif a == "--require-denylist": require = True
@@ -174,7 +193,7 @@ def main():
                 return True
         return False
 
-    files = list_files(root, staged)
+    files = list_files(root, staged, rng)
     findings = set()
 
     def add(rel, line, rule):
@@ -218,7 +237,7 @@ def main():
                         add(rel, ln, "denylist#%d" % n)
 
     gl_fail = False
-    if not staged:
+    if not staged and not rng:
         import shutil
         if shutil.which("gitleaks"):
             try:
