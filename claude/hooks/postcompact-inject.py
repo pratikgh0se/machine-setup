@@ -70,12 +70,12 @@ LIMIT = 10000   # additionalContext must stay under this (Claude Code spills lar
 INLINE_MAX = 9700  # F37.3: cut target, leaves room for the continuation line
 
 
-def split_part1(first, txt):
+def split_part1(first, txt, path):
     """F37.3: returns (inlined, rest). rest == "" when everything fits under LIMIT (no cut)."""
     head = first + PREFIX
     if len(head) + len(txt) < LIMIT:
         return txt, ""
-    budget = INLINE_MAX - len(head)
+    budget = _budget(len(head), path, True)
     heads = [m.start() for m in re.finditer(r"(?m)^## ", txt)]
     # the agent (or Haiku) section must lie wholly inside the inlined part
     need = 1
@@ -97,33 +97,52 @@ def split_part1(first, txt):
     return inl, txt[len(inl):]
 
 
+HARD_MAX = 9900     # each part's total output (warning + header + content + continuation line) stays <= this
+NAMES_MAX = 250     # the section-name list in a continuation line is cut to this many chars
+
+
+def _line(rest_len, names, path, p1):
+    where = f"part 2 below and in {path}" if p1 else path
+    return f"[Handoff continues in {where}: {rest_len} more chars (sections: {names}). Read it before acting.]"
+
+
+def _budget(head_len, path, p1):
+    """Max chars of content that may be inlined: the continuation line is sized for its worst case
+    (8-digit N, full-length names list) BEFORE content is fitted, so the total can never pass HARD_MAX."""
+    worst = len(_line(99999999, "x" * (NAMES_MAX + 5), path, p1))
+    return min(INLINE_MAX - head_len, HARD_MAX - head_len - 1 - worst)
+
+
 def names_of(rest):
     names = []
     for m in re.finditer(r"(?m)^## (.+)$", rest):
         nm = re.sub(r"\s*\(.*$", "", m.group(1)).strip()
         if nm and nm not in names:
             names.append(nm)
-    return ", ".join(names) if names else "rest of file"
+    out = ", ".join(names) if names else "rest of file"
+    if len(out) > NAMES_MAX:
+        cut = out.rfind(", ", 0, NAMES_MAX - 5)
+        out = (out[:cut] if cut > 0 else out[:NAMES_MAX - 5]) + ", ..."
+    return out
 
 
 def part1(first, txt, path):
-    inl, rest = split_part1(first, txt)
+    inl, rest = split_part1(first, txt, path)
     out = first + PREFIX + inl
     if rest:
-        out += (f"\n[Handoff continues in part 2 below and in {path}: {len(rest)} more chars "
-                f"(sections: {names_of(rest)}). Read it before acting.]")
+        out += "\n" + _line(len(rest), names_of(rest), path, True)
     return out
 
 
 def part2(first, txt, path):
     """F37.5: remaining content from the next whole section; None when nothing is left."""
-    inl, rest = split_part1(first, txt)
+    inl, rest = split_part1(first, txt, path)
     rest = rest.lstrip("\n")
     if not rest:
         return None
     if len(PREFIX2) + len(rest) < LIMIT:
         return PREFIX2 + rest.rstrip("\n")
-    budget = INLINE_MAX - len(PREFIX2)
+    budget = _budget(len(PREFIX2), path, False)
     fit = [m.start() for m in re.finditer(r"(?m)^## ", rest) if 0 < m.start() <= budget]
     if fit:
         cut = max(fit)
@@ -132,8 +151,7 @@ def part2(first, txt, path):
         cut = nl + 1 if nl > 0 else max(budget, 0)
     inl2 = rest[:cut].rstrip("\n")
     left = rest[len(inl2):]
-    return (PREFIX2 + inl2 + f"\n[Handoff continues in {path}: {len(left)} more chars "
-            f"(sections: {names_of(left)}). Read it before acting.]")
+    return PREFIX2 + inl2 + "\n" + _line(len(left), names_of(left), path, False)
 
 
 def emit(ctx):

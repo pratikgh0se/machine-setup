@@ -197,9 +197,12 @@ def write_settings(proj):
     os.makedirs(os.path.join(proj, ".claude"))
     pre = f"python3 {os.path.join(REPO, 'claude', 'hooks', 'precompact-handoff.py')}"
     post = f"python3 {os.path.join(REPO, 'claude', 'hooks', 'postcompact-inject.py')}"
+    post2 = post + " --part 2"  # F37.5: a long handoff is delivered in two parts; the token may be in either
+    post = post + " --part 1"
     write_json(os.path.join(proj, ".claude", "settings.json"), {"hooks": {
         "PreCompact": [{"hooks": [{"type": "command", "command": pre, "timeout": 90}]}],
-        "SessionStart": [{"matcher": "compact", "hooks": [{"type": "command", "command": post, "timeout": 10}]}]}})
+        "SessionStart": [{"matcher": "compact", "hooks": [{"type": "command", "command": post, "timeout": 10},
+                                                     {"type": "command", "command": post2, "timeout": 10}]}]}})
 
 
 def write_agent_file(handoffs, sid, token):
