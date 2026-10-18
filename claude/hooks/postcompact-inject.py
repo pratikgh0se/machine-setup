@@ -83,7 +83,7 @@ def header(k, first=""):
 
 
 def cont_line(k, n, names, path):
-    where = f"part {k + 1} below and in {path}" if k < MAX_PARTS else path
+    where = f"part {k + 1} (injected separately; parts may appear in any order) and in {path}" if k < MAX_PARTS else path
     return f"[Handoff continues in {where}: {n} more chars (sections: {names}). Read it before acting.]"
 
 
