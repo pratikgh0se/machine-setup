@@ -1,0 +1,39 @@
+# Changelog
+
+All notable changes are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+
+## [1.0.0] - 2026-10-18
+
+First release with full documentation.
+
+### Plugins (marketplace `bento`)
+
+| Plugin | Version |
+|---|---|
+| `safety` | 1.0.3 |
+| `usage` | 1.0.5 |
+| `awareness` | 1.0.4 |
+| `agents` | 1.2.0 |
+| `dev` | 1.0.4 |
+| `compact` | 1.2.0 |
+
+### Added
+
+- Initial public release: six plugins with 26 mods, the token-budget weekly loop, handoff hooks, settings and `CLAUDE.md` templates, and macOS setup scripts with a private overlay and a leak guard.
+- Handoff nudge (F33): the `compact` plugin asks the model to write an agent handoff file at 75% of the auto-compact window; handoffs moved to `~/.local/state/claude-handoffs`.
+- Handoff quality (F35, `compact` 1.1.0): stale-section detection, freshness rules, and decisions, tasks and agents in the facts dump.
+- Handoff reliability (F36, `compact` 1.2.0): health log, fail-safe handoff sections, the DEGRADED and REDUCED split, the `handoffalert` mod, a nightly handoff canary (launchd, 03:30), and a handoff-health section plus rule R12 in the token-budget report.
+- Public push gate: `setup/publish.sh` to review and publish unpushed public commits, with a leak scan of the range before `--push`.
+- Documentation: `ARCHITECTURE.md`, architecture decision records in `docs/adr/`, and this changelog.
+
+### Changed
+
+- Autosync commits the public repo locally and never pushes it; it logs and notifies that commits await review. The private overlay still pushes.
+- Setup: overlay-owned files take precedence, and the overlay `config.env` is exempt from the leak scan.
+
+### Fixed
+
+- launchd jobs now set `PATH` in their environment.
+- launchd entry scripts default `USER` and `LOGNAME` (needed for Keychain-backed `claude` and `gh` auth under launchd).
+- Bootstrap skips `__pycache__` and `*.pyc` when installing files into `~/.claude`.
+- Handoffs directory path fix in the setup scripts.
