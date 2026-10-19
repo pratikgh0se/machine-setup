@@ -2,7 +2,7 @@
 
 All notable changes are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [1.0.0] - 2026-10-18
+## [1.0.0] - 2026-10-19
 
 First release with full documentation.
 
@@ -24,7 +24,8 @@ First release with full documentation.
 - Handoff quality (F35, `compact` 1.1.0): stale-section detection, freshness rules, and decisions, tasks and agents in the facts dump.
 - Handoff reliability (F36, `compact` 1.2.0): health log, fail-safe handoff sections, the DEGRADED and REDUCED split, the `handoffalert` mod, a nightly handoff canary (launchd, 03:30), and a handoff-health section plus rule R12 in the token-budget report.
 - Public push gate: `setup/publish.sh` to review and publish unpushed public commits, with a leak scan of the range before `--push`.
-- Documentation: `ARCHITECTURE.md`, architecture decision records in `docs/adr/`, and this changelog.
+- Handoff keeps the user's words (F37, handoff hooks 1.2.0): the handoff file cap rises from 9,500 to 20,000 characters, "Last user messages" is the last section dropped when over the cap, and the post-compaction handoff is injected in up to three SessionStart parts (each under the 10,000-character hook limit; verified live that all parts reach the model).
+- Documentation: `ARCHITECTURE.md`, architecture decision records in `docs/adr/`, a README with an overview diagram, a handoff timeline and one illustration per plugin, and this changelog. Contract tests are public at [pratikgh0se/bento-mods-tests](https://github.com/pratikgh0se/bento-mods-tests).
 
 ### Changed
 
