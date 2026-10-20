@@ -498,3 +498,9 @@ Required ordering stays: Headline, Breakdown, Spend breakdown, Regressions (with
 
 ### H.5 Open questions
 (1) A minimum-sample guard for R12 (a) (for example >= 5 compactions) is a candidate once the first weeks of data exist. (2) A reduced-rate report threshold or flag is not defined (reduced is reported only; decided 2026-10-16); add one if the weekly counts show reduced creeping up. (3) Whether `skip` nights (claude missing or logged out) should themselves raise a flag after N consecutive nights. (4) Retention: `health.jsonl` rotates at 5000 lines (hook spec F36.B); the ledger keeps the weekly `handoff_health` summary forever (Decision 6).
+
+## Vault path under launchd (2026-10-20)
+
+launchd does not load the user's shell env, so the weekly job saw `OBSIDIAN_VAULT_PATH` unset and logged `report: skipped (OBSIDIAN_VAULT_PATH unset or missing)`. Claude Code users usually set the variable in `~/.claude/settings.json` under `env`.
+
+69. When `OBSIDIAN_VAULT_PATH` is unset or empty, the entry script reads `env.OBSIDIAN_VAULT_PATH` from `$HOME/.claude/settings.json` (JSON; missing file, invalid JSON, missing key or a non-string value = still unset, no error). A leading `~/` is expanded to `$HOME/`. A non-empty environment value always wins. The value is exported before the run starts, so the report step sees it. The log line on skip is unchanged.

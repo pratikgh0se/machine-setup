@@ -4,6 +4,19 @@
 # Exit: 0 ok/no-op; 10 probe failed; 11 analyze failed; 12 report failed.
 set -u
 export USER="${USER:-$(id -un)}" LOGNAME="${LOGNAME:-$(id -un)}"  # AC 86: claude/gh need USER for Keychain auth; launchd may not set it
+# AC 69: launchd has no shell env; fall back to env.OBSIDIAN_VAULT_PATH in ~/.claude/settings.json
+if [ -z "${OBSIDIAN_VAULT_PATH:-}" ]; then
+  _v="$(python3 -c 'import json,os,sys
+try:
+    v=json.load(open(os.path.join(os.environ["HOME"],".claude","settings.json")))["env"]["OBSIDIAN_VAULT_PATH"]
+except Exception:
+    v=""
+if isinstance(v,str) and v:
+    if v.startswith("~/"): v=os.environ["HOME"]+"/"+v[2:]
+    sys.stdout.write(v)' 2>/dev/null || true)"
+  [ -n "$_v" ] && export OBSIDIAN_VAULT_PATH="$_v"
+  unset _v
+fi
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CATCH=0; FORCE=0
 for a in "$@"; do
