@@ -428,6 +428,8 @@ Supersedes: section 4 Decision 1 and 3 (model, argv, excerpt, section heading), 
 
 **F38.7 Inject.** `postcompact-inject.py` unchanged (the summary is an ordinary `## ` section, <= 6,100 chars, so it fits whole in one part).
 
+**F38 rulings (2026-10-23).** (a) F38.6 status: a stale agent file whose meta has `stale_sections` stays `degraded` per F36.D even when the summary is ok (F36.D wins over F38.6 and over the stale-agent half of AC 89). (b) If the cap removes the summary entirely, the `## Facts (auto-extracted)` heading is still emitted. (c) The excerpt has no wrapper tag; compact summaries (`isCompactSummary`) are excluded. (d) The child runs in its own process group and is killed on timeout. (e) The "last message alone over 120k" branch of F38.2 is unreachable after the 4,000-char per-message cut and is kept only as a guard.
+
 ### F38 Acceptance criteria 81-92 (temp `HOME`; `claude` shim first on `PATH` that records argv and stdin and prints configurable text / exit code / delay; summary ENABLED unless stated)
 81. Fresh agent file, shim prints 300 chars: file has, in order, `## Agent handoff (written by the working agent)`, `## Fresh summary at compaction (sonnet; verify against facts)` with the shim text, `## Facts (auto-extracted)`; health `fallback: ok`, `summary_model: "sonnet"`, `status: ok`.
 82. Shim argv equals exactly the F38.3 list with model `sonnet` (the two `""` elements are empty strings, `--system-prompt` value equals SUMMARY_SYSTEM, last element equals SUMMARY_PROMPT); the child env has `HANDOFF_HOOK_CHILD=1` and no `CLAUDE_CODE_AUTO_COMPACT_WINDOW`.

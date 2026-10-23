@@ -140,7 +140,15 @@ Bootstrap installs hooks, a merged `settings.json`, `CLAUDE.md`, plugins and, wi
 
 ## How handoff works
 
-Bento runs Claude Code with a 400k auto-compact window instead of 1M. Turns are cheaper, the weekly limit lasts longer and quality holds up better, at the cost of more compactions. To make compaction safe, the `compact` plugin asks the model to write its own handoff file at 75% of the window (300k), and again every 50k tokens. The file has six headings: Goal, Decisions and why, Done, In progress, Dead ends, Exact next step. Claude Code compacts at about the window minus a ~33k buffer (about 367k), so the nudge lands with margin. A `PreCompact` hook then builds a deterministic handoff around the agent file, a `SessionStart` hook injects it after compaction (up to three parts), and every compaction appends a line to `health.jsonl`. A broken handoff is loud (toast, band chip and a warning to the model); a merely reduced one is only logged. A nightly canary checks the whole chain.
+Bento runs Claude Code with a 400k auto-compact window instead of 1M. Turns are cheaper, the weekly limit lasts longer and quality holds up better, at the cost of more compactions. To make compaction safe, the `compact` plugin asks the model to write its own handoff file at 75% of the window (300k), and again every 50k tokens. The file has six headings: Goal, Decisions and why, Done, In progress, Dead ends, Exact next step. Claude Code compacts at about the window minus a ~33k buffer (about 367k), so the nudge lands with margin. A `PreCompact` hook then builds a deterministic handoff around the agent file, a `SessionStart` hook injects it after compaction (up to three parts), and every compaction appends a line to `health.jsonl`. On every compaction the hook also asks Sonnet for a fresh summary of the recent conversation and adds it to the handoff (about $0.05 to $0.10 and 15 to 30 seconds per compaction); set `HANDOFF_SUMMARY=0` to turn it off, `HANDOFF_SUMMARY_MODEL` to change the model (default `sonnet`) or `HANDOFF_SUMMARY_TIMEOUT` to change the timeout in seconds (default 75). A broken handoff is loud (toast, band chip and a warning to the model); a merely reduced one is only logged. A nightly canary checks the whole chain.
+
+What to expect: in a blind quiz after compaction (scores out of 100), the compaction summary alone scored 62.
+
+Adding the agent handoff file raised it to 68.
+
+Adding the fresh Sonnet summary raised it to 75 to 76.
+
+Perfect recent memory, the ceiling, scored 85.
 
 ![Timeline from 0 to 400k tokens: nudge at 300k, re-nudge at 350k, compaction at about 367k, handoff injected](docs/img/handoff-timeline.svg)
 

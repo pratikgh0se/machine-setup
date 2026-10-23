@@ -77,7 +77,7 @@ Plain command hooks installed to `~/.claude/hooks/` and registered by the settin
 ### Tools
 
 - **token-budget** ([`tools/token-budget`](tools/token-budget/README.md)): weekly probe of always-loaded token overhead (two Haiku calls), deterministic analysis against last week, spend breakdown including risky subagent sessions, and reversible proposals that only a human applies. Spec: [`docs/token-budget-spec.md`](docs/token-budget-spec.md).
-- **handoff-canary** ([`tools/handoff-canary`](tools/handoff-canary/README.md)): nightly end-to-end proof that compaction plus handoff works, using two headless sessions (one with an agent handoff file, one relying on the Haiku fallback).
+- **handoff-canary** ([`tools/handoff-canary`](tools/handoff-canary/README.md)): nightly end-to-end proof that compaction plus handoff works, using two headless sessions (one with an agent handoff file, one with no agent file, relying on the fresh summary; the canary sets `HANDOFF_SUMMARY_MODEL=haiku` to stay cheap).
 
 ### Scheduled jobs
 
@@ -133,11 +133,8 @@ sequenceDiagram
   M->>M: write session-agent.md (six headings)
   Note over CC: compacts at about window minus 33k buffer (about 367k)
   CC->>P: PreCompact
-  alt agent file fresh
-    P->>P: build handoff around the agent file
-  else no fresh agent file
-    P->>P: Haiku fallback (REDUCED, logged only)
-  end
+  P->>P: build handoff around the agent file (if fresh)
+  P->>P: add fresh Sonnet summary (REDUCED if no fresh agent file, logged only)
   P->>P: append line to health.jsonl
   CC->>S: SessionStart (compact)
   S->>M: "Context was compacted. Read the handoff first..."
@@ -149,8 +146,9 @@ sequenceDiagram
 
 1. **Nudge.** At 75% of the window (300k with the default setting), and again every 50k tokens, the `compact` plugin's `nudge` mod appends one short note to the next tool result asking the model to write `~/.local/state/claude-handoffs/<session>-agent.md` with six headings: Goal, Decisions and why, Done, In progress, Dead ends, Exact next step. The plugin never writes the body; it writes a meta file (counts and timestamps only) and tracks staleness of the two volatile headings.
 2. **Compaction.** Claude Code compacts at roughly the window minus a ~33k buffer (about 367k for a 400k window), so the nudge fires with margin.
-3. **PreCompact hook.** `precompact-handoff.py` writes the deterministic handoff: a facts dump (recent user messages, decisions, files, tasks, agents) around the agent file when it is fresh. If there is no fresh agent file it falls back to a Haiku-written summary; that state is **REDUCED** and is only logged. If a section errored, the agent file is stale or missing, and the fallback also failed, the state is **DEGRADED**: a toast, a band chip (`handoffalert` mod) and a warning to the model ([ADR 0007](docs/adr/0007-handoff-degraded-vs-reduced.md)).
+3. **PreCompact hook.** `precompact-handoff.py` writes the deterministic handoff: a facts dump (recent user messages, decisions, files, tasks, agents) around the agent file when it is fresh. On every compaction (fresh agent file or not) it also runs a fresh Sonnet summary of the recent conversation and adds it as its own section ([ADR 0013](docs/adr/0013-fresh-summary-at-compaction.md)). With no fresh agent file but a working summary the state is **REDUCED** and is only logged. If a section errored, the agent file is stale with stale sections, or the agent file is missing and the summary also failed, the state is **DEGRADED**: a toast, a band chip (`handoffalert` mod) and a warning to the model ([ADR 0007](docs/adr/0007-handoff-degraded-vs-reduced.md)).
 4. **SessionStart(compact) hook.** `postcompact-inject.py` injects "Context was compacted. Read `<file>` first..." with the handoff content, once. The `resume` mod covers the `/handoff` and agent-file case at the plugin level.
+   Env switches: `HANDOFF_SUMMARY=0` disables the summary, `HANDOFF_SUMMARY_MODEL` picks the model (default `sonnet`), `HANDOFF_SUMMARY_TIMEOUT` sets the timeout in seconds (1 to 300, default 75).
 5. **Health log.** Every compaction appends a line to `~/.local/state/claude-handoffs/health.jsonl`. The weekly token-budget report summarises it (rule R12 flags a high degraded rate).
 6. **Nightly canary.** A launchd job at 03:30 drives two headless sessions past a compaction each and checks the whole chain; a failure raises a macOS notification and is counted in the weekly report.
 

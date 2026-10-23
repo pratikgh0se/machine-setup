@@ -82,8 +82,8 @@
 <text x="492" y="386" class="ts">Claude Code compacts. The</text>
 <text x="492" y="401" class="ts">PreCompact hook builds a</text>
 <text x="492" y="416" class="ts">deterministic handoff around</text>
-<text x="492" y="431" class="ts">the agent file (Haiku fallback</text>
-<text x="492" y="446" class="ts">if none is fresh).</text>
+<text x="492" y="431" class="ts">the agent file and a fresh</text>
+<text x="492" y="446" class="ts">Sonnet summary.</text>
 <text x="492" y="469" class="tsb">Writes:</text>
 <text x="492" y="485" class="ts">the handoff file and one line</text>
 <text x="492" y="500" class="ts">in health.jsonl</text>

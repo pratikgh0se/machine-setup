@@ -2,6 +2,16 @@
 
 All notable changes are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.1.0] - 2026-10-23
+
+### Added
+
+- Fresh summary at every compaction (F38, handoff hooks): the PreCompact hook now runs a Sonnet-written summary on every compaction, whether the agent file is fresh, stale or absent. It replaces the Haiku fallback. New switches `HANDOFF_SUMMARY` (`0` disables), `HANDOFF_SUMMARY_MODEL` (default `sonnet`) and `HANDOFF_SUMMARY_TIMEOUT` (1 to 300 s, default 75); the legacy `HANDOFF_HAIKU_FALLBACK=0` still disables it. The health line gains `summary_model`. See [ADR 0013](docs/adr/0013-fresh-summary-at-compaction.md).
+
+### Fixed
+
+- token-budget reads `OBSIDIAN_VAULT_PATH` from `settings.json` when run under launchd.
+
 ## [1.0.0] - 2026-10-19
 
 First release with full documentation.
