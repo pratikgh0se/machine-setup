@@ -3,7 +3,7 @@
 
 Proves end to end, with real headless Claude Code sessions, that PreCompact fires, a handoff is
 written, SessionStart(compact) injects it and the resumed model acts on it. Two variants, one
-compaction each: A (agent file present) and B (absent, Haiku fallback).
+compaction each: A (agent file present) and B (absent; fresh summary).
 
 Usage: run.sh [--catch-up] [--probe]
 Exit: 0 pass/skip/no-op, 1 fail, 2 usage or lock held, 3 isolation violated.
@@ -233,8 +233,9 @@ def run_variant(run, v, token, other, base_env):
     pads = make_padding(proj)
     sid = str(uuid.uuid4())
     env = dict(base_env, HANDOFF_STATE_DIR=handoffs, HANDOFF_CANARY="1",
-               CLAUDE_CODE_AUTO_COMPACT_WINDOW=str(run.window))
-    for k in ("HANDOFF_TEST_FAULT", "HANDOFF_HAIKU_FALLBACK", "HANDOFF_HOOK_CHILD"):
+               CLAUDE_CODE_AUTO_COMPACT_WINDOW=str(run.window),
+               HANDOFF_SUMMARY_MODEL="haiku")  # F38.6: keep the fresh-summary call cheap
+    for k in ("HANDOFF_TEST_FAULT", "HANDOFF_HAIKU_FALLBACK", "HANDOFF_SUMMARY", "HANDOFF_HOOK_CHILD"):
         env.pop(k, None)
     health = os.path.join(handoffs, "health.jsonl")
     t0 = time.monotonic()

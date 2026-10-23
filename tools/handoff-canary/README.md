@@ -2,7 +2,7 @@
 
 Nightly proof that compaction plus handoff works end to end. Spec: `specs/handoff-hooks-spec.md` section F36.
 
-Two headless Claude Code sessions (Haiku, project settings only, no MCP, a temp project with just the two handoff hooks) are driven past one compaction each: variant A has an agent handoff file, variant B relies on the Haiku fallback. Each passes only if PreCompact fired and logged a health line, the handoff holds the run token, SessionStart injected it without a warning, and the turn right after compaction quotes the token.
+Two headless Claude Code sessions (Haiku, project settings only, no MCP, a temp project with just the two handoff hooks) are driven past one compaction each: variant A has an agent handoff file, variant B relies on the fresh summary the hook writes at compaction (F38; the canary sets `HANDOFF_SUMMARY_MODEL=haiku`). Each passes only if PreCompact fired and logged a health line, the handoff holds the run token, SessionStart injected it without a warning, and the turn right after compaction quotes the token.
 
 ```
 tools/handoff-canary/run.sh             # run now

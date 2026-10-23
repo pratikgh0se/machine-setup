@@ -8,7 +8,7 @@ Usage: check.py <A|B> <case_dir> [--cap USD] [--timeout S] [--token T] [--other-
 """
 import json, os, sys
 
-EXPECT = {"A": {"agent_file": "fresh", "fallback": "skipped", "errors": [], "status": "ok"},
+EXPECT = {"A": {"agent_file": "fresh", "fallback": "ok", "errors": [], "status": "ok"},
           "B": {"agent_file": "absent", "fallback": "ok", "errors": [], "status": "reduced"}}
 AGENT_HEAD = "## Agent handoff"
 
@@ -47,7 +47,7 @@ def check_variant(variant, token, other_token, health_lines, latest, degraded_ex
     answer = answer or ""
     if token not in answer or (other_token and other_token in answer):
         return False, "c5"
-    if variant == "B" and "Haiku fallback failed:" in latest:
+    if variant == "B" and ("Fresh summary failed:" in latest or "Haiku fallback failed:" in latest):
         return False, "c6"
     if elapsed_s is None or elapsed_s > timeout_s:
         return False, "c7"
