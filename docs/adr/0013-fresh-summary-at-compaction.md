@@ -15,7 +15,7 @@ The PreCompact hook runs a Sonnet summary on every compaction, whether the agent
 
 ## Alternatives
 
-- Keep the Haiku fallback only when the agent file is missing: rejected, the quiz gain comes from freshness, which the agent file cannot give.
+- Keep the Haiku fallback only when the agent file is missing: rejected: the gain comes from a fresh writer at compaction time, and the agent file was fresh in 18 of 18 real compactions, so a fallback-only summary would almost never run.
 - Prompt tuning: tried, no measurable gain.
 
 ## Consequences
