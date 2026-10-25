@@ -10,7 +10,7 @@
 | `permissions.allow` | Tool calls that never prompt. Keep to read-only commands plus the handoff directory the compact hooks write to. |
 | `permissions.deny` | Tool calls that are always refused. Add folders you never want read (the template blocks build output and `node_modules`). |
 | `model` | Default model for the main thread. |
-| `hooks.SessionStart` (matcher `compact`) | Re-injects the handoff written before a compaction (`claude/hooks/postcompact-inject.py`). Three commands, `--part 1`, `--part 2` and `--part 3`: each hook's `additionalContext` is capped at 10,000 chars, so a long handoff is split across up to three. |
+| `hooks.SessionStart` (matcher `compact`) | Re-injects the handoff written before a compaction (`claude/hooks/postcompact-inject.py`). Five commands: `--part 1`, `--part 2` and `--part 3` (each hook's `additionalContext` is capped at 10,000 chars, so a long handoff is split across up to three), then `--ledger --part 1` and `--ledger --part 2` (the project's whole active decisions ledger in two parts, newest first, each under 10,000 chars). |
 | `hooks.SessionStart` (matchers `startup`, `resume`) | `postcompact-inject.py --ledger` prints the project's active decisions (the per-project ledger the PreCompact hook maintains under `~/.local/state/claude-handoffs/projects/`) into new and resumed sessions. Read-only, no model call. |
 | `hooks.PreCompact` | Writes the deterministic handoff file before compaction (`claude/hooks/precompact-handoff.py`, no LLM, always exits 0). |
 | `hooks.PreToolUse` (Bash) | `no-git-stash.sh` blocks stashing by agents; `no-root-walks.py` blocks recursive commands rooted at `/`, `/Users` or the home folder. |

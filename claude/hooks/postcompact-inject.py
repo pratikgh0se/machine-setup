@@ -144,8 +144,43 @@ def emit(ctx):
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": ctx}}))
 
 
-def ledger_mode():
-    """F39.8: SessionStart startup/resume. Print the project's active decisions (read-only, no claude)."""
+def ledger_part_head(k, path):
+    return (f"Project decisions for this repo (part {k} of the ledger; newest first; full ledger: {path}). "
+            "Standing unless the user says otherwise:\n")
+
+
+def emit_ledger_part(k, lines, path):
+    """F39.10: parts are filled with whole lines, newest first; part 2 continues where part 1 stopped;
+    entries left after part 2 are summarised by one final line. Total per part stays < LIMIT."""
+    def fill(head, rest, reserve):
+        out, used = [], len(head)
+        for x in rest:
+            if used + len(x) + 1 + reserve >= LIMIT:
+                break
+            out.append(x)
+            used += len(x) + 1
+        return out
+    rest = lines
+    out1 = fill(ledger_part_head(1, path), rest, 0)
+    rest2 = rest[len(out1):]
+    if k == 1:
+        if out1:
+            emit(ledger_part_head(1, path) + "\n".join(out1))
+        return
+    if not rest2:
+        return
+    head = ledger_part_head(2, path)
+    out2 = fill(head, rest2, 0)
+    if len(out2) < len(rest2):  # entries remain: leave room for the final summary line
+        n = len(rest2)
+        out2 = fill(head, rest2, len("- (%d older active decisions in the full ledger; read it before acting on anything older)" % n) + 1)
+        out2.append("- (%d older active decisions in the full ledger; read it before acting on anything older)" % (n - len(out2)))
+    emit(head + "\n".join(out2))
+
+
+def ledger_mode(lpart=None):
+    """F39.8: SessionStart startup/resume. Print the project's active decisions (read-only, no claude).
+    F39.10: with lpart 1|2 (compact), print that part of the whole ledger instead (each part < 10,000 chars)."""
     import hashlib, subprocess
     d = json.load(sys.stdin)
     cwd = d.get("cwd") if isinstance(d, dict) else None
@@ -172,6 +207,9 @@ def ledger_mode():
     lines = [act[i] for i in sorted(act, reverse=True)]
     if not lines:
         return
+    if lpart:
+        emit_ledger_part(lpart, lines, path)
+        return
     if sum(len(x) + 1 for x in lines) > 4000:  # same whole-line cut as the handoff section (F39.4)
         room = 4000 - len("- (999 older active decisions in the full ledger)") - 1
         out, used = [], 0
@@ -187,7 +225,7 @@ def ledger_mode():
 
 if "--ledger" in sys.argv[1:]:
     try:
-        ledger_mode()
+        ledger_mode(PART if "--part" in sys.argv[1:] and PART in (1, 2) else None)
     except BaseException:
         pass
     sys.exit(0)

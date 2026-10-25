@@ -10,7 +10,7 @@ if os.environ.get("HANDOFF_HOOK_CHILD"):  # spawned by our own summary call: nev
     sys.exit(0)
 
 _T0 = time.monotonic()
-HOOK_VERSION = "1.4.0"
+HOOK_VERSION = "1.4.1"
 HOME = os.path.expanduser("~")
 HANDOFFS_DIR = (os.environ.get("HANDOFF_STATE_DIR") or "").strip() or os.path.join(HOME, ".local", "state", "claude-handoffs")
 HEALTH_FILE = os.path.join(HANDOFFS_DIR, "health.jsonl")
@@ -519,7 +519,10 @@ LEDGER_PROMPT = ("Stdin has the CURRENT LEDGER, then NEW CONVERSATION since it w
                  "replaces an earlier decision, rewrite that entry as SUPERSEDED by the new id with the reason; "
                  "never delete entries. Do not record plans, progress or the assistant's own unapproved proposals. "
                  "Format of active lines: \"- D<n> [YYYY-MM-DD] <decision> | why: <reason>\". Format of superseded "
-                 "lines: \"- D<n> [YYYY-MM-DD] SUPERSEDED by D<m> [YYYY-MM-DD]: <old decision> | because: <reason>\".")
+                 "lines: \"- D<n> [YYYY-MM-DD] SUPERSEDED by D<m> [YYYY-MM-DD]: <old decision> | because: <reason>\". "
+                 "Keep the ledger lean: when a new decision changes, narrows or repeats an older one, rewrite the "
+                 "older entry as SUPERSEDED by the new id (because: replaced, narrowed or merged). Two active "
+                 "entries must never say the same thing or contradict each other.")
 ACT_RE = re.compile(r"^- D(\d+) \[(\d{4}-\d{2}-\d{2})\] (.+?) \| why: (.+)$")
 SUP_RE = re.compile(r"^- D(\d+) \[(\d{4}-\d{2}-\d{2})\] SUPERSEDED by D(\d+) \[(\d{4}-\d{2}-\d{2})\]: (.+?) \| because: (.+)$")
 
@@ -963,9 +966,8 @@ def build(d, info):
         def _ledger_section():
             ents = parse_ledger(read_text(os.path.join(ledger_dir(root), "decisions.md")))
             info["ledger_active"], info["ledger_superseded"] = ledger_counts(ents)
-            lines = active_lines(ents)
-            return (f"## Project decisions (active; full ledger: {os.path.join(ledger_dir(root), 'decisions.md')})\n"
-                    + "\n".join(lines) + "\n\n") if lines else ""
+            info["ledger_chars"] = sum(len(e["line"]) for e in ents.values() if e["kind"] == "act")
+            return ""  # F39.10: the ledger is injected by postcompact-inject.py --ledger --part 1|2, not in latest.md
         lblock = guard("decisions", info, _ledger_section)
         if isinstance(lblock, Rep):
             lblock = Rep(lblock + "\n\n")
@@ -1087,7 +1089,7 @@ def main():
     sid = str(sid_raw or "unknown").replace("/", "_")
     info = {"agent_file": "absent", "stale_sections": [], "fallback": "skipped", "errors": [], "truncated": False,
             "ledger": "none" if ledger_enabled() else "disabled", "ledger_active": 0, "ledger_superseded": 0,
-            "ledger_restored": 0}
+            "ledger_restored": 0, "ledger_chars": 0}
     body = ""
     try:
         try:
@@ -1140,6 +1142,7 @@ def write_health(d, sid, info, body):
         "ledger_active": info.get("ledger_active", 0),
         "ledger_superseded": info.get("ledger_superseded", 0),
         "ledger_restored": info.get("ledger_restored", 0),
+        "ledger_chars": info.get("ledger_chars", 0),
         "duration_ms": int((time.monotonic() - _T0) * 1000),
         "output_chars": len(body),
         "truncated": bool(info["truncated"]),
