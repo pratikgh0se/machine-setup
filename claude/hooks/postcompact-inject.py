@@ -224,6 +224,8 @@ def ledger_mode(lpart=None):
 
 
 if "--ledger" in sys.argv[1:]:
+    if os.environ.get("HANDOFF_LEDGER") == "0":  # AC 100: ledger disabled, print nothing
+        sys.exit(0)
     try:
         ledger_mode(PART if "--part" in sys.argv[1:] and PART in (1, 2) else None)
     except BaseException:
