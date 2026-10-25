@@ -234,7 +234,8 @@ def run_variant(run, v, token, other, base_env):
     sid = str(uuid.uuid4())
     env = dict(base_env, HANDOFF_STATE_DIR=handoffs, HANDOFF_CANARY="1",
                CLAUDE_CODE_AUTO_COMPACT_WINDOW=str(run.window),
-               HANDOFF_SUMMARY_MODEL="haiku")  # F38.6: keep the fresh-summary call cheap
+               HANDOFF_SUMMARY_MODEL="haiku",  # F38.6: keep the fresh-summary call cheap
+               HANDOFF_LEDGER="0")  # F39: the canary proves the handoff path only; no ledger merge call
     for k in ("HANDOFF_TEST_FAULT", "HANDOFF_HAIKU_FALLBACK", "HANDOFF_SUMMARY", "HANDOFF_HOOK_CHILD"):
         env.pop(k, None)
     health = os.path.join(handoffs, "health.jsonl")

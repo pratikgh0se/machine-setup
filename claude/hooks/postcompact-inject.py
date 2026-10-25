@@ -144,6 +144,54 @@ def emit(ctx):
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": ctx}}))
 
 
+def ledger_mode():
+    """F39.8: SessionStart startup/resume. Print the project's active decisions (read-only, no claude)."""
+    import hashlib, subprocess
+    d = json.load(sys.stdin)
+    cwd = d.get("cwd") if isinstance(d, dict) else None
+    if not isinstance(cwd, str) or not cwd.strip():
+        return
+    root = cwd
+    try:
+        r = subprocess.run(["git", "-C", cwd, "rev-parse", "--show-toplevel"],
+                           capture_output=True, text=True, timeout=5)
+        if r.returncode == 0 and (r.stdout or "").strip():
+            root = r.stdout.strip()
+    except Exception:
+        pass
+    key = re.sub(r"[^A-Za-z0-9._-]", "_", os.path.basename(root.rstrip("/")))[:40] + "-" + \
+        hashlib.sha1(root.encode("utf-8")).hexdigest()[:8]
+    path = os.path.abspath(os.path.join(HANDOFFS_DIR, "projects", key, "decisions.md"))
+    act, sup = {}, set()
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for ln in f.read().splitlines():
+            ln = ln.strip()
+            m = re.match(r"^- D(\d+) \[\d{4}-\d{2}-\d{2}\] (SUPERSEDED by D\d+ \[\d{4}-\d{2}-\d{2}\]: .+ \| because: .+|.+ \| why: .+)$", ln)
+            if m and int(m.group(1)) >= 1 and int(m.group(1)) not in act and int(m.group(1)) not in sup:
+                (sup.add(int(m.group(1))) if m.group(2).startswith("SUPERSEDED by D") else act.__setitem__(int(m.group(1)), ln))
+    lines = [act[i] for i in sorted(act, reverse=True)]
+    if not lines:
+        return
+    if sum(len(x) + 1 for x in lines) > 4000:  # same whole-line cut as the handoff section (F39.4)
+        room = 4000 - len("- (999 older active decisions in the full ledger)") - 1
+        out, used = [], 0
+        for x in lines:
+            if used + len(x) + 1 > room:
+                break
+            out.append(x)
+            used += len(x) + 1
+        lines = out + [f"- ({len(act) - len(out)} older active decisions in the full ledger)"]
+    emit("Project decisions from earlier sessions in this repo (newest first; full ledger: " + path
+         + "). Treat them as standing unless the user says otherwise:\n" + "\n".join(lines))
+
+
+if "--ledger" in sys.argv[1:]:
+    try:
+        ledger_mode()
+    except BaseException:
+        pass
+    sys.exit(0)
+
 try:
     d = json.load(sys.stdin)
     sid = d.get("session_id")
