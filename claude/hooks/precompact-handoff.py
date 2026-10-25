@@ -10,7 +10,7 @@ if os.environ.get("HANDOFF_HOOK_CHILD"):  # spawned by our own summary call: nev
     sys.exit(0)
 
 _T0 = time.monotonic()
-HOOK_VERSION = "1.4.1"
+HOOK_VERSION = "1.4.2"
 HOME = os.path.expanduser("~")
 HANDOFFS_DIR = (os.environ.get("HANDOFF_STATE_DIR") or "").strip() or os.path.join(HOME, ".local", "state", "claude-handoffs")
 HEALTH_FILE = os.path.join(HANDOFFS_DIR, "health.jsonl")
@@ -506,7 +506,7 @@ def summary_handoff(tp, model, timeout, standing="(none)"):
 
 
 # ---- F39 project decisions ledger ----------------------------------------------------------------
-LEDGER_LINE_MAX = 400
+LEDGER_LINE_MAX = 700  # F39.11 (was 400)
 LEDGER_SECTION_CAP = 4000
 MERGE_INPUT_CAP = 60000
 LOCK_WAIT_S = 10
@@ -522,7 +522,8 @@ LEDGER_PROMPT = ("Stdin has the CURRENT LEDGER, then NEW CONVERSATION since it w
                  "lines: \"- D<n> [YYYY-MM-DD] SUPERSEDED by D<m> [YYYY-MM-DD]: <old decision> | because: <reason>\". "
                  "Keep the ledger lean: when a new decision changes, narrows or repeats an older one, rewrite the "
                  "older entry as SUPERSEDED by the new id (because: replaced, narrowed or merged). Two active "
-                 "entries must never say the same thing or contradict each other.")
+                 "entries must never say the same thing or contradict each other. When you merge or narrow "
+                 "entries, keep every concrete value from both (names, numbers, paths, limits, schedules).")
 ACT_RE = re.compile(r"^- D(\d+) \[(\d{4}-\d{2}-\d{2})\] (.+?) \| why: (.+)$")
 SUP_RE = re.compile(r"^- D(\d+) \[(\d{4}-\d{2}-\d{2})\] SUPERSEDED by D(\d+) \[(\d{4}-\d{2}-\d{2})\]: (.+?) \| because: (.+)$")
 
@@ -579,13 +580,15 @@ def parse_entry(line):
         return None
     full = pre + dec + sep + why
     if len(full) > LEDGER_LINE_MAX:
-        excess = len(full) - LEDGER_LINE_MAX + 3
-        if len(why) - excess >= 20:
-            why = why[: len(why) - excess] + "..."
-        elif len(dec) - excess >= 20:
-            dec = dec[: len(dec) - excess] + "..."
+        # F39.11: parsed first; cut the why/because text (ending ...), then the decision text; never dropped
+        over = len(full) - LEDGER_LINE_MAX
+        keep = max(len(why) - over - 3, 0)
+        if keep or len(why) - over >= 3:
+            why = why[:keep] + "..."
         else:
-            return None
+            over -= len(why) - 3
+            why = "..."
+            dec = dec[: max(len(dec) - over - 3, 0)] + "..."
         full = pre + dec + sep + why
     return {"id": int(m.group(1)), "kind": kind, "line": full, "by": by}
 
