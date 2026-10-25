@@ -19,7 +19,7 @@ The hooks own a per-project decisions ledger (F39 to F39.11 in `specs/handoff-ho
 
 - One ledger per project, keyed by the git root. The user chose per-project over per-session on 2026-10-25.
 - At each compaction a Sonnet call merges the old ledger with the new segment. Code validates the result. Decisions are superseded, never deleted.
-- The ledger is injected in its own two parts (F39.10), with an authority line telling the model the ledger outranks older prose. Authority order: the ledger, then the fresh summary, then the agent note.
+- The ledger is injected in its own two parts (F39.10), with an authority line telling the model the ledger outranks older prose. Authority order: the user's latest words, then the ledger, then the agent note, then the fresh summary, then Claude Code's summary, then facts; the newer user statement wins.
 - The handoff budget is 14k characters (F39.11 allows 700-character entries and parses before cutting, keeping concrete values).
 - The summary is state-honest: it reports what is actually in force, not what was discussed.
 - The ledger is also injected at session startup and resume, not only after compaction.
