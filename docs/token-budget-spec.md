@@ -374,7 +374,7 @@ Probe
 7. "blocked by enterprise policy" lines do not cause non-zero exit and increment `denied_mcp_notices`.
 8. Unparseable `/context` -> exit 3 and ledger unchanged.
 9. Manifest conforms to 4.1.2: arrays sorted, `env.CLAUDE_CODE_AUTO_COMPACT_WINDOW` is `null` when unset and `"400000"` when set, `denied_mcp_servers` populated from settings.
-10. A fixture settings file containing `"env":{"X_API_KEY":"sk-abc12345678"}` or MCP `headers` yields no occurrence of the secret strings anywhere in state dir output.
+10. A fixture settings file containing `"env":{"X_API_KEY":"sk-EXAMPLE-NOT-A-KEY"}` or MCP `headers` yields no occurrence of the secret strings anywhere in state dir output.
 11. `--dry-run` writes no files.
 
 Analyze
