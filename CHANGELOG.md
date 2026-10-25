@@ -2,6 +2,24 @@
 
 All notable changes are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.2.0] - 2026-10-25
+
+### Added
+
+- Project decisions ledger (F39 and F39.10 to F39.11, handoff hooks): a per-project ledger keyed by git root, merged by Sonnet at each compaction with code validation (supersede, never delete), injected in its own two parts with an authority line, and also at startup and resume. The handoff budget is 14k and the summary is state-honest. New switches `HANDOFF_LEDGER` (`0` disables) and `HANDOFF_LEDGER_MODEL`. See [ADR 0014](docs/adr/0014-project-decisions-ledger.md).
+
+### Changed
+
+- "Decisions via questions" is no longer injected as a section.
+
+### Fixed
+
+- The example key in the token-budget spec (AC 10) is now a plain placeholder, so gitleaks no longer flags it.
+
+### Removed
+
+- `.gitleaksignore`, no longer needed after the placeholder fix.
+
 ## [1.1.0] - 2026-10-23
 
 ### Added

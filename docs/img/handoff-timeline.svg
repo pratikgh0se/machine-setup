@@ -56,7 +56,7 @@
 <line x1="932" y1="100" x2="932" y2="231" class="lns" />
 <circle cx="932" cy="240" r="11" class="c-ok"/>
 <text x="932" y="244.5" class="tsb" text-anchor="middle">4</text>
-<text x="932" y="62" class="tb" text-anchor="end">Handoff injected (up to 3 parts)</text>
+<text x="932" y="62" class="tb" text-anchor="end">Handoff + project decisions injected</text>
 <text x="932" y="80" class="t" text-anchor="end">session continues</text>
 <rect x="24" y="342" width="214" height="176" rx="8" class="k-warn" />
 <text x="36" y="366" class="tb">1  Nudge, 300k</text>
@@ -90,8 +90,8 @@
 <rect x="708" y="342" width="214" height="176" rx="8" class="k-ok" />
 <text x="720" y="366" class="tb">4  Continue</text>
 <text x="720" y="386" class="ts">The SessionStart hook injects</text>
-<text x="720" y="401" class="ts">the handoff once, in up to</text>
-<text x="720" y="416" class="ts">three parts. A degraded handoff</text>
+<text x="720" y="401" class="ts">the handoff and project decisions,</text>
+<text x="720" y="416" class="ts">in up to three parts. A degraded handoff</text>
 <text x="720" y="431" class="ts">also raises a toast and a band</text>
 <text x="720" y="446" class="ts">chip.</text>
 <text x="720" y="469" class="tsb">Writes:</text>

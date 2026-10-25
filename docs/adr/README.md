@@ -17,3 +17,4 @@ Decisions that shaped Bento, in MADR-lite form (Status, Date, Context, Decision,
 | [0011](0011-handoff-nudge-bounded-channel.md) | Handoff nudge through a bounded model-facing channel | Accepted | 2026-10-15 |
 | [0012](0012-public-push-gate.md) | Public push gate | Accepted | 2026-10-18 |
 | [0013](0013-fresh-summary-at-compaction.md) | Fresh Sonnet summary at every compaction | Accepted | 2026-10-23 |
+| [0014](0014-project-decisions-ledger.md) | Hook-owned project decisions ledger | Accepted | 2026-10-25 |
