@@ -748,7 +748,7 @@ async function nudgeDbg($: EngineInterface, ctx: Ctx, ev: NudgeDebugEvent['ev'],
   if (o.reason !== undefined) e.reason = o.reason
   const run = async (): Promise<void> => {
     try {
-      await appendDebug($.fs, home, e)
+      await appendDebug({ exists: x => $.fs.exists(x), stat: x => $.fs.stat(x), read: x => $.fs.read(x), write: (x, text) => $.fs.write(x, text) }, home, e)
     } catch (err) {
       if (!n.dbgFailedLogged) {
         n.dbgFailedLogged = true
