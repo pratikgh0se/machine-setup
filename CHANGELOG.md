@@ -2,6 +2,16 @@
 
 All notable changes are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.3.0] - 2026-10-27
+
+### Changed
+
+- Compact plugin 1.3.0 (F41, D11): the handoff nudge now repeats every 25,000 tokens (was 50,000) from 75% of the window, so the agent handoff is fresher at compaction.
+
+### Added
+
+- Compact plugin: final nudge at `nudge_finalPercent` (default 90%, 0 disables) worded "Compaction is imminent", a delivery-time safety net that re-derives the due step from the last measured size on every tool call and prompt, and a debug log `nudge-debug.jsonl` (`nudge_debugLog`, rotated at 1 MB).
+
 ## [1.2.0] - 2026-10-25
 
 ### Added

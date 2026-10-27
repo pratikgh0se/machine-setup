@@ -23,8 +23,8 @@ import { cardText, coachSegment, statusText as coachStatus } from './mods/coach'
 import { buildPrompt, compactInstructions, kebab, missingHeadings, parseArgs } from './mods/handoff'
 import { resumeEntry } from './mods/resume'
 import { alertSegment, cardLine, clearedBody, degradedPath, parseAlert, reasonTexts, shownKey, statusPrefix, toastLine } from './mods/handoffalert'
-import { agentResumeEntry, handoffsDir, buildMeta, highestK, isFresh, isStaleSections, metaPathFor, agentPathFor, nudgeLine, nudgeText, parseEnvWindow, sectionHashes, STALE_TARGETS, threshold } from './mods/nudge'
-import type { AgentFresh } from './mods/nudge'
+import { agentResumeEntry, appendDebug, dueNudge, handoffsDir, buildMeta, highestK, isFresh, isStaleSections, metaPathFor, agentPathFor, nudgeLine, nudgeText, parseEnvWindow, sectionHashes, STALE_TARGETS, threshold } from './mods/nudge'
+import type { AgentFresh, NudgeDebugEvent, NudgeRt } from './mods/nudge'
 import { windowFor } from './_shared/windows'
 import { ORCH_KEY, TOAST_KEY, isLast, lastKey, pendingKey } from './store'
 import type { LastHandoff, Pending } from './store'
@@ -718,6 +718,57 @@ async function resumeOnEnd($: EngineInterface, e: { reason: string; sessionId?: 
 // ---------------------------------------------------------------------------
 // Handoff nudge (F33): one reminder, appended to a model request that happens anyway. Never blocks, never spends a turn.
 
+/** F33.2 reset: step, arm, final and the per-cycle skip log. */
+function resetCycle(n: NudgeRt): void {
+  n.lastK = -1
+  n.armText = n.armedK = n.armTokens = undefined
+  n.armFinal = false
+  n.finalDone = false
+  n.skipLogged = []
+}
+
+const hasCycleState = (n: NudgeRt): boolean => n.lastK >= 0 || n.armText != null || n.finalDone
+
+/** F41.4: append one event to nudge-debug.jsonl. Serialised, never throws, a failure is logged once. Disabled = no file touched. */
+async function nudgeDbg($: EngineInterface, ctx: Ctx, ev: NudgeDebugEvent['ev'], o: { reason?: string; channel?: 'tool.call' | 'prompt.submit'; k?: number; t?: number; final?: boolean } = {}): Promise<void> {
+  const n = ctx.rt.nudge
+  if (!ctx.opts.nudgeDebugLog || !n.home || !n.sid) return
+  const home = n.home
+  const e: NudgeDebugEvent = {
+    ts: new Date(await $.clock.now()).toISOString(),
+    sid: n.sid,
+    ev,
+    t: o.t ?? n.lastT ?? null,
+    w: n.window ?? null,
+    k: o.k ?? n.armedK ?? (n.lastK >= 0 ? n.lastK : null),
+    lastK: n.lastK,
+    final: o.final ?? n.armFinal,
+    channel: o.channel ?? null,
+  }
+  if (o.reason !== undefined) e.reason = o.reason
+  const run = async (): Promise<void> => {
+    try {
+      await appendDebug($.fs, home, e)
+    } catch (err) {
+      if (!n.dbgFailedLogged) {
+        n.dbgFailedLogged = true
+        $.ui.log(`compact nudge: debug log not written (${errText(err)})`, { to: 'debug' })
+      }
+    }
+  }
+  const chain = (n.dbgChain ?? Promise.resolve()).then(run)
+  n.dbgChain = chain
+  await chain
+}
+
+/** F41.4: skip at most once per distinct reason per cycle. */
+async function nudgeSkip($: EngineInterface, ctx: Ctx, reason: string): Promise<void> {
+  const n = ctx.rt.nudge
+  if (n.skipLogged.includes(reason)) return
+  n.skipLogged.push(reason)
+  await nudgeDbg($, ctx, 'skip', { reason })
+}
+
 /** Home and session id -> agent file path. Needs `$`; the `tool.call` hook only reads the cached path. */
 async function nudgeIdentity($: EngineInterface, ctx: Ctx): Promise<boolean> {
   const n = ctx.rt.nudge
@@ -732,8 +783,8 @@ async function nudgeIdentity($: EngineInterface, ctx: Ctx): Promise<boolean> {
   if (!n.home) return false
   const sid = await sessionId($)
   if (n.sid !== undefined && n.sid !== sid) {
-    n.lastK = -1
-    n.armText = n.armedK = n.armTokens = undefined
+    resetCycle(n)
+    n.lastT = undefined
     n.agentWrittenAt = n.agentWrittenAtTokens = n.agentSize = n.lastNudgeAt = n.lastNudgeTokens = n.metaTokens = undefined
     n.nudgeCount = 0
     n.sections = n.baseSections = n.prevSections = n.staleSections = n.lastUserMsgAt = undefined
@@ -812,17 +863,35 @@ async function writeMeta($: EngineInterface, ctx: Ctx, t: number | undefined): P
 }
 
 /** Takes the pending arm for delivery: sets `lastK` and clears it. The caller books the delivery. */
-function takeArm(ctx: Ctx): { text: string; tokens: number } | undefined {
+function takeArm(ctx: Ctx): { text: string; tokens: number; k?: number; final: boolean } | undefined {
   const n = ctx.rt.nudge
   if (n.armText == null) return undefined
-  const out = { text: n.armText, tokens: n.armTokens ?? ctx.rt.ctx ?? 0 }
+  const out = { text: n.armText, tokens: n.armTokens ?? ctx.rt.ctx ?? 0, k: n.armedK, final: n.armFinal }
   if (n.armedK != null) n.lastK = n.armedK
+  if (n.armFinal) n.finalDone = true
   n.armText = n.armedK = n.armTokens = undefined
+  n.armFinal = false
   return out
 }
 
-async function nudgeDelivered($: EngineInterface, ctx: Ctx, tokens: number): Promise<void> {
+/** F41.3: with nothing armed, re-derive the due step from the cached measured size (memory only, no $ call). */
+function armFromCache(ctx: Ctx): { k?: number; final: boolean } | undefined {
+  const { opts } = ctx
   const n = ctx.rt.nudge
+  const t = n.lastT
+  if (n.armText != null || typeof t !== 'number' || !n.window || !n.agentPath) return undefined
+  const due = dueNudge(t, n.window, opts.nudgeAtPercent, opts.nudgeEvery, opts.nudgeFinalPercent, n.lastK, n.armedK, n.finalDone, n.armFinal)
+  if (!due) return undefined
+  n.armText = nudgeText(t, n.window, n.agentPath, n.agentWrittenAt != null || n.agentSize != null, false, due.final)
+  n.armedK = due.k
+  n.armFinal = due.final
+  n.armTokens = t
+  return due
+}
+
+async function nudgeDelivered($: EngineInterface, ctx: Ctx, tokens: number, channel: 'tool.call' | 'prompt.submit', k: number | undefined, final: boolean): Promise<void> {
+  const n = ctx.rt.nudge
+  await nudgeDbg($, ctx, 'deliver', { channel, k: k ?? n.lastK, final, t: tokens })
   n.lastNudgeAt = await $.clock.now()
   n.lastNudgeTokens = tokens
   n.nudgeCount++
@@ -837,17 +906,23 @@ async function nudgeOnMeasure($: EngineInterface, e: { agentId?: string; context
   const { opts } = ctx
   const n = ctx.rt.nudge
   const t = e.context?.tokens
-  if (!opts.mods.nudge || e.agentId || typeof t !== 'number') return
+  if (!opts.mods.nudge || typeof t !== 'number') return
+  if (e.agentId) {
+    if (n.sid) await nudgeSkip($, ctx, 'agent_subagent')
+    return
+  }
+  n.lastT = t
   if (!(await nudgeIdentity($, ctx)) || !n.agentPath) return
   const now = await $.clock.now()
   const w = await nudgeWindow($, ctx, now)
+  if (!w) await nudgeSkip($, ctx, 'no_window')
   if (w) {
     if (t < threshold(w, opts.nudgeAtPercent, opts.nudgeEvery, 0) / 2) {
-      n.lastK = -1
-      n.armText = n.armedK = n.armTokens = undefined
+      if (hasCycleState(n)) await nudgeDbg($, ctx, 'reset', { reason: 'below_half' })
+      resetCycle(n)
     } else {
-      const k = highestK(t, w, opts.nudgeAtPercent, opts.nudgeEvery)
-      if (k > n.lastK && (n.armedK ?? -1) < k) {
+      const due = dueNudge(t, w, opts.nudgeAtPercent, opts.nudgeEvery, opts.nudgeFinalPercent, n.lastK, n.armedK, n.finalDone, n.armFinal)
+      if (due) {
         let exists = false
         try {
           exists = await $.fs.exists(n.agentPath)
@@ -868,9 +943,11 @@ async function nudgeOnMeasure($: EngineInterface, e: { agentId?: string; context
           }
         }
         n.armStale = stale
-        n.armText = nudgeText(t, w, n.agentPath, exists, stale)
-        n.armedK = k
+        n.armText = nudgeText(t, w, n.agentPath, exists, stale, due.final)
+        if (due.k !== undefined) n.armedK = due.k
+        n.armFinal = due.final
         n.armTokens = t
+        await nudgeDbg($, ctx, 'arm', { k: due.k, final: due.final, t })
       }
     }
   }
@@ -903,9 +980,11 @@ function nudgeToolCall<R extends { context?: readonly string[] }>($: EngineInter
     if (typeof ev.content === 'string') n.agentSize = ev.content.length
     $.clock.after(0, () => void safe(() => nudgeWritten($, ctx)))
   }
+  const late = armFromCache(ctx)
+  if (late) $.clock.after(0, () => void safe(() => nudgeDbg($, ctx, 'arm', { k: late.k, final: late.final })))
   const taken = takeArm(ctx)
   if (!taken) return r
-  $.clock.after(0, () => void safe(() => nudgeDelivered($, ctx, taken.tokens)))
+  $.clock.after(0, () => void safe(() => nudgeDelivered($, ctx, taken.tokens, 'tool.call', taken.k, taken.final)))
   return { ...r, context: [...(r.context ?? []), taken.text] }
 }
 
@@ -946,9 +1025,11 @@ async function nudgeOnPrompt($: EngineInterface, ctx: Ctx, text?: string): Promi
     ctx.rt.nudge.userTurns++
     ctx.rt.nudge.lastUserMsgAt = await $.clock.now()
   }
+  const late = armFromCache(ctx)
+  if (late) await safe(() => nudgeDbg($, ctx, 'arm', { k: late.k, final: late.final }))
   const taken = takeArm(ctx)
   if (!taken) return undefined
-  await safe(() => nudgeDelivered($, ctx, taken.tokens))
+  await safe(() => nudgeDelivered($, ctx, taken.tokens, 'prompt.submit', taken.k, taken.final))
   return taken.text
 }
 
@@ -962,8 +1043,10 @@ async function nudgeOnStart($: EngineInterface, ctx: Ctx): Promise<void> {
 async function nudgeOnCompact($: EngineInterface, e: { agentId?: string; trigger: string }, r: { skip?: string }, ctx: Ctx): Promise<void> {
   if (!ctx.opts.mods.nudge || e.agentId || e.trigger === 'precompute' || r.skip !== undefined) return
   const n = ctx.rt.nudge
-  n.lastK = -1
-  n.armText = n.armedK = n.armTokens = undefined
+  await nudgeIdentity($, ctx)
+  await nudgeDbg($, ctx, 'reset', { reason: 'compact' })
+  resetCycle(n)
+  n.lastT = undefined
   n.rawAt = undefined
   if (await nudgeIdentity($, ctx)) await nudgeWindow($, ctx, await $.clock.now())
   await nudgePublish($, ctx)
@@ -972,8 +1055,9 @@ async function nudgeOnCompact($: EngineInterface, e: { agentId?: string; trigger
 async function nudgeOnEnd($: EngineInterface, ctx: Ctx): Promise<void> {
   if (!ctx.opts.mods.nudge) return
   const n = ctx.rt.nudge
-  n.lastK = -1
-  n.armText = n.armedK = n.armTokens = undefined
+  if (hasCycleState(n)) await nudgeDbg($, ctx, 'reset', { reason: 'end' })
+  resetCycle(n)
+  n.lastT = undefined
   await nudgePublish($, ctx)
 }
 
@@ -1385,7 +1469,11 @@ export const register: Register = (on, options) => {
     on('tool.call', async ($, e, next) => {
       const r = await next(e)
       try {
-        if (r.deny !== undefined || (e as { agentId?: string }).agentId) return r
+        if ((e as { agentId?: string }).agentId) {
+          if (!ctx.rt.nudge.skipLogged.includes('agent_subagent')) $.clock.after(0, () => void safe(() => nudgeSkip($, ctx, 'agent_subagent')))
+          return r
+        }
+        if (r.deny !== undefined) return r
         return nudgeToolCall($, e, r, ctx)
       } catch {
         return r

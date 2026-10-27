@@ -94,6 +94,22 @@ function f33Fresh(meta: NudgeMeta | undefined, now: number, mtimeMs?: number): b
 
 export const clampPercent = (n: number): number => Math.min(95, Math.max(10, n))
 export const clampEvery = (n: number): number => Math.max(10_000, n)
+/** F41.2: 0 (or less) disables the final nudge, else 50..99. */
+export const clampFinal = (n: number): number => (n <= 0 ? 0 : Math.min(99, Math.max(50, n)))
+/** F41.2: F = ceil(W * finalPercent / 100). */
+export const finalThreshold = (w: number, finalPercent: number): number => Math.ceil((w * finalPercent) / 100)
+
+/**
+ * F41.2/F41.3: what is due at context size `t`. `k` is set when a regular step above `max(lastK, armedK)` is due;
+ * `final` is true when the final nudge is due (or already armed) and has not been delivered this cycle. Undefined = nothing to arm.
+ */
+export function dueNudge(t: number, w: number, atPercent: number, every: number, finalPercent: number, lastK: number, armedK: number | undefined, finalDone: boolean, armFinal: boolean): { k?: number; final: boolean } | undefined {
+  const hk = highestK(t, w, atPercent, every)
+  const kNew = hk > Math.max(lastK, armedK ?? -1)
+  const fDue = finalPercent > 0 && !finalDone && !armFinal && t >= finalThreshold(w, finalPercent)
+  if (!kNew && !fDue) return undefined
+  return { k: kNew ? hk : undefined, final: armFinal || fDue }
+}
 
 /** `CLAUDE_CODE_AUTO_COMPACT_WINDOW` text -> window, or undefined when not an integer > 0. */
 export function parseEnvWindow(s: string | undefined | null): number | undefined {
@@ -121,14 +137,37 @@ export const metaPathFor = (home: string, sid: string): string => `${handoffsDir
 
 /** F35.3 text (supersedes F33.3), built at arm time. `verb` is `update` when the file exists, else `write`. */
 export const STALE_SENTENCE = 'Your last handoff is STALE: "In progress" and "Exact next step" are unchanged since the previous nudge; rewrite them from scratch, do not append.'
-export function nudgeText(t: number, w: number, path: string, exists: boolean, stale = false): string {
+export function nudgeText(t: number, w: number, path: string, exists: boolean, stale = false, imminent = false): string {
   const pct = Math.floor((t * 100) / w)
-  return `[compact] Context is ${pct}% of the auto-compact window (${kfmt(t)} of ${kfmt(w)}). Compaction will drop your working memory.${stale ? ` ${STALE_SENTENCE}` : ''} Now, in one Write call, ${exists ? 'update' : 'write'} ${path} (create the folder if missing) with exactly these headings: ${HEADINGS.join(', ')}. REWRITE "In progress" and "Exact next step" in place for the current state; never append "DONE since" notes. Move finished items to "Done". Keep the whole file under 5000 chars. Use real paths, commands and ids; no secrets. Then continue the task.`
+  return `[compact] Context is ${pct}% of the auto-compact window (${kfmt(t)} of ${kfmt(w)}).${imminent ? ' Compaction is imminent.' : ''} Compaction will drop your working memory.${stale ? ` ${STALE_SENTENCE}` : ''} Now, in one Write call, ${exists ? 'update' : 'write'} ${path} (create the folder if missing) with exactly these headings: ${HEADINGS.join(', ')}. REWRITE "In progress" and "Exact next step" in place for the current state; never append "DONE since" notes. Move finished items to "Done". Keep the whole file under 5000 chars. Use real paths, commands and ids; no secrets. Then continue the task.`
 }
 
 /** F33.11 Resume entry for the agent file (<= 240 chars with a normal path). */
 export const agentResumeEntry = (path: string): string =>
   `Context was compacted. Read ${path} first (your own handoff), then continue from its "Exact next step". Check its "In progress" and "Dead ends" before acting.`
+
+/** F41.4: one debug event. */
+export type NudgeDebugEvent = { ts: string; sid: string; ev: 'arm' | 'deliver' | 'reset' | 'skip'; t: number | null; w: number | null; k: number | null; lastK: number; final: boolean; channel: 'tool.call' | 'prompt.submit' | null; reason?: string }
+export const DEBUG_MAX_BYTES = 1_000_000
+export const debugPathFor = (home: string): string => `${handoffsDir(home)}/nudge-debug.jsonl`
+export const debugRotatedPathFor = (home: string): string => `${handoffsDir(home)}/nudge-debug.1.jsonl`
+
+/** The slice of `$.fs` the debug log needs. */
+export type DebugFs = { exists(p: string): Promise<boolean>; stat(p: string): Promise<{ size?: number }>; read(p: string): Promise<unknown>; write(p: string, text: string): Promise<void> }
+
+/** F41.4: append one JSON line; above 1,000,000 bytes the old file replaces `nudge-debug.1.jsonl` first. `$.fs` has no append, so this reads and rewrites (the file is capped). */
+export async function appendDebug(fs: DebugFs, home: string, ev: NudgeDebugEvent): Promise<void> {
+  const path = debugPathFor(home)
+  const line = JSON.stringify(ev) + '\n'
+  let prev = ''
+  if (await fs.exists(path)) {
+    const size = (await fs.stat(path)).size ?? 0
+    const text = String((await fs.read(path)) ?? '')
+    if (size > DEBUG_MAX_BYTES) await fs.write(debugRotatedPathFor(home), text)
+    else prev = text
+  }
+  await fs.write(path, prev + line)
+}
 
 export type AgentFresh = 'fresh' | 'stale' | 'none'
 
@@ -145,6 +184,15 @@ export type NudgeRt = {
   armedK?: number
   armText?: string
   armTokens?: number
+  /** F41.2: the pending arm is (also) the final nudge; `finalDone` = delivered since the last reset. */
+  armFinal: boolean
+  finalDone: boolean
+  /** F41.3: last measured main-loop context size, cached by `session.measure`. */
+  lastT?: number
+  /** F41.4: skip reasons already logged this cycle, and the serialised write chain. */
+  skipLogged: string[]
+  dbgChain?: Promise<void>
+  dbgFailedLogged: boolean
   lastNudgeAt?: number
   lastNudgeTokens?: number
   nudgeCount: number
@@ -167,7 +215,7 @@ export type NudgeRt = {
   pub?: string
 }
 
-export const makeNudgeRt = (): NudgeRt => ({ lastK: -1, nudgeCount: 0, metaFailedLogged: false, userTurns: 0, toolCalls: 0 })
+export const makeNudgeRt = (): NudgeRt => ({ armFinal: false, finalDone: false, skipLogged: [], dbgFailedLogged: false, lastK: -1, nudgeCount: 0, metaFailedLogged: false, userTurns: 0, toolCalls: 0 })
 
 /** Meta for isFresh / the file, from the runtime. */
 export function buildMeta(n: NudgeRt, ctx: number | undefined): NudgeMeta {

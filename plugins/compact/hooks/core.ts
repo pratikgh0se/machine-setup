@@ -6,7 +6,7 @@ import { fmtTokens } from './_shared/fmt'
 import { parsePricesJson, rowFor } from './_shared/prices'
 import { parseWindowsJson } from './_shared/windows'
 import type { WindowOverrides } from './_shared/windows'
-import { clampEvery, clampPercent, makeNudgeRt } from './mods/nudge'
+import { clampEvery, clampFinal, clampPercent, makeNudgeRt } from './mods/nudge'
 import type { NudgeRt } from './mods/nudge'
 import { makeAlertRt } from './mods/handoffalert'
 import type { AlertRt } from './mods/handoffalert'
@@ -35,6 +35,8 @@ export type Opts = {
   minBandRows: number
   nudgeAtPercent: number
   nudgeEvery: number
+  nudgeFinalPercent: number
+  nudgeDebugLog: boolean
   windowsJson: string
   mods: Record<'coach' | 'handoff' | 'resume' | 'orch' | 'nudge' | 'handoffalert', boolean>
 }
@@ -76,7 +78,9 @@ export function readOpts(o: PluginOptions | undefined): Opts {
     orchDefault: bool(x, 'orch.enabled', true),
     minBandRows: num(x, 'minBandRows', 4),
     nudgeAtPercent: clampPercent(num(x, 'nudge.atPercent', 75)),
-    nudgeEvery: clampEvery(num(x, 'nudge.everyTokens', 50_000)),
+    nudgeEvery: clampEvery(num(x, 'nudge.everyTokens', 25_000)),
+    nudgeFinalPercent: clampFinal(num(x, 'nudge.finalPercent', 90)),
+    nudgeDebugLog: bool(x, 'nudge.debugLog', true),
     windowsJson: typeof x.windowsJson === 'string' ? x.windowsJson : '',
     mods: {
       coach: bool(x, 'mod.coach.enabled', true),

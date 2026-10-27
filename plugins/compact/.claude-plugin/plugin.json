@@ -1,6 +1,6 @@
 {
   "name": "compact",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Compact Coach, /handoff, Resume loader and Orchestrator mode: compact at the right moment and keep the thread across it",
   "types": "./types/index.d.ts",
   "author": {
@@ -144,7 +144,19 @@
       "type": "number",
       "title": "Nudge again every (tokens)",
       "description": "Another nudge each time context grows by this much (minimum 10000)",
-      "default": 50000
+      "default": 25000
+    },
+    "nudge_finalPercent": {
+      "type": "number",
+      "title": "Final nudge at (% of window)",
+      "description": "One last nudge worded as imminent at this percent of the auto-compact window (50 to 99; 0 turns it off)",
+      "default": 90
+    },
+    "nudge_debugLog": {
+      "type": "boolean",
+      "title": "Nudge debug log",
+      "description": "Append nudge events to ~/.local/state/claude-handoffs/nudge-debug.jsonl (rotated at 1 MB)",
+      "default": true
     },
     "orch_enabled": {
       "type": "boolean",

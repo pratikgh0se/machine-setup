@@ -1,6 +1,6 @@
 # compact
 
-Compact at the right moment and keep the thread across it. Version 1.2.0. Mods: a cost-aware Compact Coach, a two-step `/handoff`, a Resume loader, a Handoff nudge, a Handoff alert and an optional Orchestrator mode. Spends no tokens except the model-visible pieces listed under Context cost.
+Compact at the right moment and keep the thread across it. Version 1.3.0. Mods: a cost-aware Compact Coach, a two-step `/handoff`, a Resume loader, a Handoff nudge, a Handoff alert and an optional Orchestrator mode. Spends no tokens except the model-visible pieces listed under Context cost.
 
 ## Install
 
@@ -28,7 +28,7 @@ No timer, hook or toast ever compacts for you.
 
 **Resume loader** (`mod_resume_enabled`). After a compaction that follows a saved handoff, the first prompt carries one short line pointing at the file (`Context was compacted. Read <file> first ...`), once. A handoff older than `handoff_resumeMaxAgeMin` is not used.
 
-**Handoff nudge** (`mod_nudge_enabled`, default on). When context reaches `nudge_atPercent` (75) of the auto-compact window, and again every `nudge_everyTokens` (50,000) of growth, one short `[compact]` note is appended to the next tool result (or prompt) asking the working model to write its own handoff to `~/.local/state/claude-handoffs/<session>-agent.md`. No extra turn, nothing in the band, never blocks. The window is `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, else the session's measured window, else a model table (`windowsJson` overrides). If an automatic compaction then happens without a `/handoff`, the Resume loader points the next prompt at that agent file when it is fresh (see contract below).
+**Handoff nudge** (`mod_nudge_enabled`, default on). When context reaches `nudge_atPercent` (75) of the auto-compact window, and again every `nudge_everyTokens` (25,000) of growth, plus one final note at `nudge_finalPercent` (90) worded "Compaction is imminent" (once per cycle; if a regular step is due at the same moment, one note counts as both), one short `[compact]` note is appended to the next tool result (or prompt) asking the working model to write its own handoff to `~/.local/state/claude-handoffs/<session>-agent.md`. No extra turn, nothing in the band, never blocks. The window is `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, else the session's measured window, else a model table (`windowsJson` overrides). Each tool call and prompt re-checks the last measured size, so a missed arm cannot suppress a nudge. Events are logged to `~/.local/state/claude-handoffs/nudge-debug.jsonl` (`nudge_debugLog`, rotated to `nudge-debug.1.jsonl` at 1 MB). If an automatic compaction then happens without a `/handoff`, the Resume loader points the next prompt at that agent file when it is fresh (see contract below).
 
 **Handoff alert** (`mod_handoffalert_enabled`, default on). When the handoff of a compaction is degraded (a section failed, a section is stale, or there is no fresh agent file and the Haiku fallback failed), the repo's hooks write `~/.local/state/claude-handoffs/<session>-degraded.json`. This mod reads it and shows one toast (`HANDOFF DEGRADED · <reasons>`) and a first band chip `HANDOFF DEGRADED · <first reason> +n` that stays until you run `/handoff` or the agent rewrites its handoff file; it then marks the file `clearedAt`. A reduced handoff (no agent file but the Haiku fallback worked) shows nothing. `/coach` gains `handoff health: ok|DEGRADED: ...`. Adds nothing to the model's context; the model-facing warning comes from the SessionStart hook.
 
@@ -100,7 +100,9 @@ Always loaded: about 100 tokens for the Orchestrator section when on (0 when off
 | `handoff_confirmTtlMin` | `30` | number | How long /handoff go stays available after the file is ready |
 | `handoff_resumeMaxAgeMin` | `240` | number | A handoff saved longer ago than this is not used to resume |
 | `nudge_atPercent` | `75` | number | First nudge at this percent of the auto-compact window (10 to 95) |
-| `nudge_everyTokens` | `50000` | number | Another nudge each time context grows by this much (minimum 10000) |
+| `nudge_everyTokens` | `25000` | number | Another nudge each time context grows by this much (minimum 10000) |
+| `nudge_finalPercent` | `90` | number | One last nudge worded as imminent at this percent of the auto-compact window (50 to 99; 0 turns it off) |
+| `nudge_debugLog` | `true` | boolean | Append nudge events to `~/.local/state/claude-handoffs/nudge-debug.jsonl` (rotated at 1 MB) |
 | `orch_enabled` | `true` | boolean | First-run default for Orchestrator mode; /orch overrides it once used |
 | `minBandRows` | `4` | number | The band stays silent when fewer rows are free |
 | `windowsJson` | (empty) | string | JSON {"asOf":"YYYY-MM-DD","sonnet":200000,"opus":1000000} tokens per family (or a model-id substring). Empty = built-in table. |
