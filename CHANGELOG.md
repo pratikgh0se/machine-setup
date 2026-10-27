@@ -10,6 +10,7 @@ All notable changes are recorded here. The format follows [Keep a Changelog](htt
 
 ### Added
 
+- Faster, fresher decisions ledger (F40, handoff hooks 1.5.0): the merge now returns only the changes (new decisions and `SUPERSEDE` lines) and code applies them, so the call is much shorter and nothing is ever dropped. It has its own timeout `HANDOFF_LEDGER_TIMEOUT` (1 to 300 s, default 100), reads messages oldest first up to 40,000 characters so a backlog is caught up over several compactions, and ignores synthetic entries (tool output, command echoes, task notifications) when judging freshness. The health line gains `ledger_error`. The PreCompact hook timeout is now 150.
 - Compact plugin: final nudge at `nudge_finalPercent` (default 90%, 0 disables) worded "Compaction is imminent", a delivery-time safety net that re-derives the due step from the last measured size on every tool call and prompt, and a debug log `nudge-debug.jsonl` (`nudge_debugLog`, rotated at 1 MB).
 
 ## [1.2.0] - 2026-10-25

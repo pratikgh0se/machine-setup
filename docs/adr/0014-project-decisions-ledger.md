@@ -39,10 +39,10 @@ Old-decision quiz, scored out of 100: 13.5 before, 56.2 with the ledger (ceiling
 
 - Two Sonnet calls per compaction, about $0.10 to $0.20 and 20 to 40 seconds.
 - Parallel chats in one repository share one ledger; a file lock guards it.
-- `HANDOFF_LEDGER=0` disables it; `HANDOFF_LEDGER_MODEL` sets the model.
+- `HANDOFF_LEDGER=0` disables it; `HANDOFF_LEDGER_MODEL` sets the model; `HANDOFF_LEDGER_TIMEOUT` sets the merge timeout in seconds (1 to 300, default 100). Since F40 the merge returns only changes, and the PreCompact hook timeout is 150.
 
 ## References
 
-- `specs/handoff-hooks-spec.md` sections F39 to F39.11
+- `specs/handoff-hooks-spec.md` sections F39 to F39.11 and F40
 - Code commits b850293, 0948192, 5d6e3f8, 0e36b26
 - [0013](0013-fresh-summary-at-compaction.md), [0007](0007-handoff-degraded-vs-reduced.md)
