@@ -201,7 +201,7 @@ def write_settings(proj):
     post3 = post + " --part 3"
     post = post + " --part 1"
     write_json(os.path.join(proj, ".claude", "settings.json"), {"hooks": {
-        "PreCompact": [{"hooks": [{"type": "command", "command": pre, "timeout": 90}]}],
+        "PreCompact": [{"hooks": [{"type": "command", "command": pre, "timeout": 150}]}],
         "SessionStart": [{"matcher": "compact", "hooks": [{"type": "command", "command": post, "timeout": 10},
                                                      {"type": "command", "command": post2, "timeout": 10},
                                                      {"type": "command", "command": post3, "timeout": 10}]}]}})

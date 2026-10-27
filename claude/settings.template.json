@@ -63,7 +63,7 @@
     "PreCompact": [
       {
         "hooks": [
-          { "type": "command", "command": "python3 __HOME__/.claude/hooks/precompact-handoff.py", "timeout": 90 }
+          { "type": "command", "command": "python3 __HOME__/.claude/hooks/precompact-handoff.py", "timeout": 150 }
         ]
       }
     ]

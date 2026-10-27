@@ -10,7 +10,7 @@ if os.environ.get("HANDOFF_HOOK_CHILD"):  # spawned by our own summary call: nev
     sys.exit(0)
 
 _T0 = time.monotonic()
-HOOK_VERSION = "1.4.2"
+HOOK_VERSION = "1.5.0"
 HOME = os.path.expanduser("~")
 HANDOFFS_DIR = (os.environ.get("HANDOFF_STATE_DIR") or "").strip() or os.path.join(HOME, ".local", "state", "claude-handoffs")
 HEALTH_FILE = os.path.join(HANDOFFS_DIR, "health.jsonl")
@@ -42,6 +42,7 @@ def genuine(t):
         return False
     for p in ("<task-notification", "[SYSTEM NOTIFICATION", "<system-reminder", "<command-name",
               "<local-command", "<command-message", "Caveat:",
+              "<artifact-content-authored-by-others", "<bash-input>", "<bash-stdout>", "<bash-stderr>",  # F40.3
               "This session is being continued"):
         if t.startswith(p):
             return False
@@ -508,12 +509,16 @@ def summary_handoff(tp, model, timeout, standing="(none)"):
 # ---- F39 project decisions ledger ----------------------------------------------------------------
 LEDGER_LINE_MAX = 700  # F39.11 (was 400)
 LEDGER_SECTION_CAP = 4000
-MERGE_INPUT_CAP = 60000
+MERGE_INPUT_CAP = 40000  # F40.2 (was 60,000)
+LEDGER_TIMEOUT_DEFAULT = 100  # F40.2
 LOCK_WAIT_S = 10
 BACKUPS_KEEP = 20
 LEDGER_SYSTEM = "You maintain a project's decisions ledger for an AI coding agent. Output only the ledger."
-LEDGER_PROMPT = ("Stdin has the CURRENT LEDGER, then NEW CONVERSATION since it was last updated. Output the "
-                 "complete updated ledger in exactly the same format. Rules: keep every existing entry and its id. "
+LEDGER_PROMPT = ("Stdin has the CURRENT LEDGER, then NEW CONVERSATION since it was last updated. "
+                 "Output only the changes, one per line, nothing else: new decisions as "
+                 "\"- D<n> [YYYY-MM-DD] <decision> | why: <reason>\" with n continuing after the highest "
+                 "existing id, and replacements as \"SUPERSEDE D<old> BY D<new>: <reason>\" where D<new> is an "
+                 "existing or newly added id. Output \"NO CHANGES\" if nothing qualifies. Rules: keep every existing entry and its id. "
                  "Add an entry only for a decision the user made or explicitly approved (a choice, a rule, a "
                  "constraint, a permission, a rejected option), dated with the day it was made. When the user "
                  "replaces an earlier decision, rewrite that entry as SUPERSEDED by the new id with the reason; "
@@ -530,6 +535,13 @@ SUP_RE = re.compile(r"^- D(\d+) \[(\d{4}-\d{2}-\d{2})\] SUPERSEDED by D(\d+) \[(
 
 def ledger_enabled():
     return os.environ.get("HANDOFF_LEDGER") != "0"
+
+
+def ledger_timeout():
+    v = (os.environ.get("HANDOFF_LEDGER_TIMEOUT") or "").strip()
+    if re.fullmatch(r"\d+", v) and 1 <= int(v) <= 300:
+        return int(v)
+    return LEDGER_TIMEOUT_DEFAULT
 
 
 def ledger_model():
@@ -631,8 +643,10 @@ def read_text(path):
 
 
 def merge_items(path, since_ms):
-    """F39.3 merge input: ([item text], newest merged ts string or None). Never raises."""
-    items, asks, last_asst, newest = [], {}, "", None
+    """F39.3 + F40.2 merge input: ([item text], ts string of the newest item sent or None). Items are taken
+    OLDEST first up to MERGE_INPUT_CAP chars (whole items), so a backlog is caught up over several
+    compactions. Never raises."""
+    units, asks, last_asst = [], {}, ""  # unit: (text, ms, ts_s)
     try:
         fh = open(path, encoding="utf-8", errors="replace")
     except Exception:
@@ -672,64 +686,63 @@ def merge_items(path, since_ms):
                                     ln = f"ANSWER {ts_s or '?'}: {one_line(q, 200)} -> {one_line(a, 200)}"
                                     if isinstance(note, str) and note.strip():
                                         ln += f" (notes: {one_line(note, 200)})"
-                                    items.append(ln)
-                                    if ms is not None and (newest is None or ms > newest[0]):
-                                        newest = (ms, ts_s)
+                                    units.append((ln, ms, ts_s))
                         continue
                     tx = text_of(c).strip()
                     if genuine(tx):
                         if newer:
+                            u = f"USER {ts_s or '?'}: " + trunc(tx, 4000)
                             if last_asst:
-                                items.append("ASSISTANT: " + last_asst[-1500:])
-                            items.append(f"USER {ts_s or '?'}: " + trunc(tx, 4000))
-                            if ms is not None and (newest is None or ms > newest[0]):
-                                newest = (ms, ts_s)
+                                u = "ASSISTANT: " + last_asst[-1500:] + "\n\n" + u
+                            units.append((u, ms, ts_s))
                         last_asst = ""
             except Exception:
                 continue
-    sizes = [len(x) for x in items]
-    total = sum(sizes) + 2 * max(len(items) - 1, 0)
-    i = 0
-    while total > MERGE_INPUT_CAP and len(items) - i > 1:
-        total -= sizes[i] + 2
-        i += 1
-    items = items[i:]
-    if items and len("\n\n".join(items)) > MERGE_INPUT_CAP:
-        items = [items[-1][-MERGE_INPUT_CAP:]]
-    return items, (newest[1] if newest else None)
+    sent, total, newest = [], 0, None
+    for text, ms, ts_s in units:
+        add = len(text) + (2 if sent else 0)
+        if sent and total + add > MERGE_INPUT_CAP:
+            break
+        sent.append(text)
+        total += add
+        if ms is not None and (newest is None or ms >= newest[0]):
+            newest = (ms, ts_s)
+    if sent and total > MERGE_INPUT_CAP:
+        sent = [sent[0][:MERGE_INPUT_CAP]]
+    return sent, (newest[1] if newest else None)
 
 
-def validate_merge(prev, out_text):
-    """F39.3 validation in code. Returns (entries, restored), or (None, 0) when no valid line came back."""
-    model = parse_ledger(out_text)
-    if not model:
-        return None, 0
+SUPERSEDE_RE = re.compile(r"^SUPERSEDE D(\d+) BY D(\d+): (.+)$")
+
+
+def apply_changes(prev, out_text):
+    """F40.1: apply the model's ADD / SUPERSEDE lines to the previous entries. Returns (entries, n_changes);
+    entries is a new dict, `prev` is untouched. Invalid lines are ignored. Never removes an entry."""
+    res = dict(prev)
     prev_max = max(prev) if prev else 0
-    res = {}
-    for i, e in model.items():
-        if i in prev:
-            p = prev[i]
-            if p["kind"] == "sup":
-                res[i] = p  # never reactivated or rewritten
-            elif e["kind"] == "sup":
-                res[i] = e if (e["by"] != i and (e["by"] in model or e["by"] in prev)) else p
-            else:
-                res[i] = e
-        elif i > prev_max:
-            res[i] = e
-    restored = 0
-    for i, p in prev.items():
-        if i not in res:
-            res[i] = p
-            restored += 1
-    for i in list(res):  # a superseder must exist in the result
-        e = res[i]
-        if e["kind"] == "sup" and e["by"] not in res:
-            if i in prev:
-                res[i] = prev[i]
-            else:
-                del res[i]
-    return res, restored
+    lines = [(ln or "").strip() for ln in (out_text or "").splitlines()]
+    changes = 0
+    for ln in lines:
+        e = parse_entry(ln)
+        if e and e["kind"] == "act" and e["id"] > prev_max and e["id"] not in res:
+            res[e["id"]] = e
+            changes += 1
+    today = datetime.date.today().isoformat()
+    for ln in lines:
+        m = SUPERSEDE_RE.match(ln)
+        if not m:
+            continue
+        old, new, why = int(m.group(1)), int(m.group(2)), m.group(3).strip()
+        if old == new or old not in res or new not in res or res[old]["kind"] != "act" or not why:
+            continue
+        am = ACT_RE.match(res[old]["line"])
+        if not am:
+            continue
+        sup = parse_entry(f"- D{old} [{am.group(2)}] SUPERSEDED by D{new} [{today}]: {am.group(3)} | because: {why}")
+        if sup:
+            res[old] = sup
+            changes += 1
+    return res, changes
 
 
 def prune_backups(ddir):
@@ -748,27 +761,41 @@ def ledger_counts(entries):
             sum(1 for e in entries.values() if e["kind"] == "sup"))
 
 
+def ledger_error_of(err):
+    """Map a run_claude failure reason to the F40.4 ledger_error value."""
+    err = str(err)
+    if err.startswith("timeout"):
+        return "timeout"
+    m = re.match(r"claude exited (-?\d+)", err)
+    if m:
+        return "exit " + m.group(1)
+    if err == "claude binary not found":
+        return "FileNotFoundError"
+    return err or "failed"
+
+
 def ledger_merge(sid, tp, root, led, timeout):
-    """Thread body: lock, merge the new conversation into the ledger, validate, write. Fills `led`
-    (status ok|unchanged|failed|locked, restored). Never raises."""
+    """Thread body: lock, merge the new conversation into the ledger as a delta, write. Fills `led`
+    (status ok|unchanged|failed|locked, restored, error). `timeout` covers the lock wait and the claude
+    call together (F40.2). Never raises."""
     t0 = time.monotonic()
-    deadline = t0 + timeout + 5
+    deadline = t0 + timeout
     lock = None
     try:
         if fcntl is None:
-            led["status"] = "failed"
+            led["status"], led["error"] = "failed", "NoFcntl"
             return
         ddir = ledger_dir(root)
         os.makedirs(ddir, exist_ok=True)
         lock = open(os.path.join(ddir, "decisions.lock"), "a+")
-        wait_until = t0 + min(LOCK_WAIT_S, timeout + 4)
+        wait_until = t0 + min(LOCK_WAIT_S, timeout)
         while True:
             try:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 break
             except OSError:
                 if time.monotonic() >= wait_until:
-                    led["status"] = "locked"
+                    led["status"], led["error"] = "locked", "locked"
                     return
                 time.sleep(0.1)
         lpath, spath = os.path.join(ddir, "decisions.md"), os.path.join(ddir, "decisions.state.json")
@@ -786,26 +813,24 @@ def ledger_merge(sid, tp, root, led, timeout):
             return
         stdin_text = ("CURRENT LEDGER:\n" + (prev_text.rstrip("\n") if prev_text.strip() else "(empty)")
                       + "\n\nNEW CONVERSATION:\n" + "\n\n".join(items))
-        remaining = max(1, int(deadline - time.monotonic()))
-        out, err = run_claude(stdin_text, LEDGER_SYSTEM, LEDGER_PROMPT, ledger_model(), min(timeout, remaining))
+        remaining = max(1.0, deadline - time.monotonic())
+        out, err = run_claude(stdin_text, LEDGER_SYSTEM, LEDGER_PROMPT, ledger_model(), remaining)
         if err or out is None:
-            led["status"] = "failed"
+            led["status"], led["error"] = "failed", ledger_error_of(err)
             return
-        res, restored = validate_merge(prev, out)
-        if res is None:
-            led["status"] = "failed" if prev else "unchanged"
-            return
-        if prev_text.strip():
-            ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-            write_atomic(os.path.join(ddir, f"decisions.{ts}.md"), prev_text)
-            prune_backups(ddir)
-        write_atomic(lpath, ledger_text(root, res))
+        res, changes = apply_changes(prev, out)
+        if changes:
+            if prev_text.strip():
+                ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+                write_atomic(os.path.join(ddir, f"decisions.{ts}.md"), prev_text)
+                prune_backups(ddir)
+            write_atomic(lpath, ledger_text(root, res))
         write_atomic(spath, json.dumps({"v": 1, "root": root, "updatedAt": int(time.time() * 1000), "lastSid": sid,
                                         "lastEntryTs": newest or last_ts}))
-        led["status"] = "ok"
-        led["restored"] = restored
-    except BaseException:
-        led["status"] = "failed"
+        led["status"] = "ok" if changes else "unchanged"
+        led["restored"] = 0
+    except BaseException as e:
+        led["status"], led["error"] = "failed", type(e).__name__
     finally:
         try:
             if lock is not None:
@@ -902,6 +927,7 @@ def build(d, info):
     enabled = summary_enabled()
     model = summary_model() if enabled else ""
     timeout = summary_timeout()
+    l_timeout = ledger_timeout()
     info["summary_model"] = model
 
     body, warn, stale_names = read_agent(str(sid).replace("/", "_"), P)
@@ -931,9 +957,10 @@ def build(d, info):
     standing = "\n".join(prev_active) if prev_active else "(none)"
     mthread = None
     if root is not None:
-        mthread = threading.Thread(target=ledger_merge, args=(str(sid).replace("/", "_"), tp, root, led, timeout),
+        mthread = threading.Thread(target=ledger_merge, args=(str(sid).replace("/", "_"), tp, root, led, l_timeout),
                                    daemon=True)
         mthread.start()
+        m_start = time.monotonic()
 
     htext, hline = None, ""
 
@@ -959,11 +986,12 @@ def build(d, info):
             info["errors"].append("fallback")
 
     if mthread is not None:
-        mthread.join(timeout + 6)
+        mthread.join(max(0.0, m_start + l_timeout + 6 - time.monotonic()))
         if led["status"] == "pending":
-            led["status"] = "failed"
+            led["status"], led["error"] = "failed", "timeout"
     info["ledger"] = led["status"]
     info["ledger_restored"] = led["restored"]
+    info["ledger_error"] = led.get("error", "") if led["status"] in ("failed", "locked") else ""
     lblock = ""
     if root is not None:
         def _ledger_section():
@@ -1092,7 +1120,7 @@ def main():
     sid = str(sid_raw or "unknown").replace("/", "_")
     info = {"agent_file": "absent", "stale_sections": [], "fallback": "skipped", "errors": [], "truncated": False,
             "ledger": "none" if ledger_enabled() else "disabled", "ledger_active": 0, "ledger_superseded": 0,
-            "ledger_restored": 0, "ledger_chars": 0}
+            "ledger_restored": 0, "ledger_chars": 0, "ledger_error": ""}
     body = ""
     try:
         try:
@@ -1146,6 +1174,7 @@ def write_health(d, sid, info, body):
         "ledger_superseded": info.get("ledger_superseded", 0),
         "ledger_restored": info.get("ledger_restored", 0),
         "ledger_chars": info.get("ledger_chars", 0),
+        "ledger_error": info.get("ledger_error", ""),
         "duration_ms": int((time.monotonic() - _T0) * 1000),
         "output_chars": len(body),
         "truncated": bool(info["truncated"]),
