@@ -1,6 +1,8 @@
-# Bento
+# Bento: plugins and hooks for Claude Code
 
-**Bento** is a set of add-ons for [Claude Code](https://claude.com/claude-code). It gives you six small plugins that add live panes, a status band above the prompt, toasts and guard rails; hooks that keep your thread alive when a long session compacts; a weekly token-budget report; and macOS scripts that rebuild the whole setup on a new Mac. Install one plugin or all of them. Everything is plain files: TypeScript hooks, shell, Python (standard library only) and markdown specs. Version 1.0.0; see the [changelog](CHANGELOG.md).
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE) [![Release](https://img.shields.io/github/v/release/pratikgh0se/machine-setup)](https://github.com/pratikgh0se/machine-setup/releases/latest) [![leak-scan](https://github.com/pratikgh0se/machine-setup/actions/workflows/leak-scan.yml/badge.svg)](https://github.com/pratikgh0se/machine-setup/actions/workflows/leak-scan.yml)
+
+**Bento** is a set of add-ons for [Claude Code](https://claude.com/claude-code). It gives you six small plugins that add live panes, a status band above the prompt, toasts and guard rails; hooks that keep your thread alive when a long session compacts; a weekly token-budget report; and macOS scripts that rebuild the whole setup on a new Mac. Install one plugin or all of them. Everything is plain files: TypeScript hooks, shell, Python (standard library only) and markdown specs. See the [latest release](https://github.com/pratikgh0se/machine-setup/releases/latest) and [changelog](CHANGELOG.md).
 
 This repository is called `machine-setup`. The plugin marketplace inside it is called `bento`.
 
