@@ -106,7 +106,7 @@ def agent_end(txt):
     am = re.search(r"(?m)^## (Agent handoff|Model-written handoff)", txt)
     if not am:
         return 1
-    inner = ("Goal", "Decisions and why", "Done", "In progress", "Dead ends", "Exact next step")
+    inner = ("Goal", "Parallel work running", "Decisions and why", "Done", "In progress", "Dead ends", "Exact next step")
     nxt = [m.start() for m in re.finditer(r"(?m)^## (.+?)\s*$", txt)
            if m.start() > am.start() and m.group(1) not in inner]
     return nxt[0] if nxt else len(txt) + 1
