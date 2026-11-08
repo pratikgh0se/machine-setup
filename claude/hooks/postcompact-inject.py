@@ -69,6 +69,30 @@ HARD_MAX = 9900    # each part's total output (warning + header + content + cont
 INLINE_MAX = 9700  # content target per part
 NAMES_MAX = 150    # the section-name list in a continuation line is cut to this many chars
 MAX_PARTS = 3      # F37.6
+HOOK_VERSION = "1.6.0"
+_SID = ["unknown"]
+
+
+def log_error(exc):
+    """F42.6: one JSON line {ts, hook, version, sid, error, trace} in <state>/hooks-error.jsonl (rotated to .1 above
+    1,000,000 bytes). Never raises."""
+    try:
+        import traceback
+        path = os.path.join(HANDOFFS_DIR, "hooks-error.jsonl")
+        os.makedirs(HANDOFFS_DIR, exist_ok=True)
+        try:
+            if os.path.getsize(path) > 1000000:
+                os.replace(path, path + ".1")
+        except OSError:
+            pass
+        tr = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)).rstrip("\n").splitlines()[-20:]
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"ts": utc_now(), "hook": "inject", "version": HOOK_VERSION, "sid": str(_SID[0])[:36],
+                                "error": f"{type(exc).__name__}: {exc}"[:300], "trace": tr}) + "\n")
+    except BaseException:
+        pass
+
+
 try:
     _a = sys.argv[1:]
     PART = int(_a[_a.index("--part") + 1]) if "--part" in _a else 1  # no arg = part 1 (old installs keep working)
@@ -145,42 +169,116 @@ def emit(ctx):
 
 
 def ledger_part_head(k, path):
-    return (f"Project decisions for this repo (part {k} of the ledger; newest first; full ledger: {path}). "
-            "Standing unless the user says otherwise:\n")
+    return (f"Project decisions for this repo (part {k} of the ledger; standing rules first, then decisions, then "
+            f"tasks, newest first within each; full ledger: {path}). Standing unless the user says otherwise:\n")
 
 
-def emit_ledger_part(k, lines, path):
-    """F39.10: parts are filled with whole lines, newest first; part 2 continues where part 1 stopped;
-    entries left after part 2 are summarised by one final line. Total per part stays < LIMIT."""
-    def fill(head, rest, reserve):
+def index_note(path):
+    return f"Index entries are summaries: read the full entry in {path} before acting on one.\n"
+
+
+ACT_LINE_RE = re.compile(r"^- D(\d+) \[\d{4}-\d{2}-\d{2}\] (.+) \| why: .+$")
+KIND_ORDER = {"rule": 0, "decision": 1, "task": 2}
+
+
+def parse_ledger_file(path):
+    """F42.1: active entries as dicts (id, kind rule|decision|task, line, text), in priority order: rules, then
+    decisions (untagged count as decision), then tasks, each newest id first. SUPERSEDED and RESOLVED lines are skipped."""
+    act, other = {}, set()
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for ln in f.read().splitlines():
+            ln = ln.strip()
+            m = re.match(r"^- D(\d+) \[\d{4}-\d{2}-\d{2}\] (SUPERSEDED by D\d+ \[\d{4}-\d{2}-\d{2}\]: .+ \| because: .+|RESOLVED \[\d{4}-\d{2}-\d{2}\]: .+ \| was: .+)$", ln)
+            if m and int(m.group(1)) >= 1:
+                other.add(int(m.group(1)))
+                continue
+            m = ACT_LINE_RE.match(ln)
+            if m and int(m.group(1)) >= 1 and int(m.group(1)) not in act and int(m.group(1)) not in other:
+                text = m.group(2)
+                tm = re.match(r"^\[(rule|decision|task)\] (.*)$", text)
+                act[int(m.group(1))] = {"id": int(m.group(1)), "kind": tm.group(1) if tm else "decision",
+                                        "line": ln, "text": tm.group(2) if tm else text}
+    ents = sorted(act.values(), key=lambda e: (KIND_ORDER[e["kind"]], -e["id"]))
+    return [e for e in ents if e["id"] not in other]
+
+
+def index_line(e, width):
+    t = " ".join(e["text"].split())
+    return f"- D{e['id']} [{e['kind']}] " + (t[:width] + "\u2026" if len(t) > width else t)
+
+
+def pack(full, idx, count_line, path):
+    """Greedy whole-line packing of the stream (full-text lines, then the INDEX region) into <= MAX_PARTS parts of
+    <= HARD_MAX chars. Returns the list of part texts or None when it does not fit."""
+    stream = [("f", x) for x in full]
+    if idx or count_line:
+        stream.append(("m", "INDEX (active entries not shown in full above; same priority order):"))
+        stream += [("i", x) for x in idx]
+        if count_line:
+            stream.append(("c", count_line))
+    parts, k, pos = [], 1, 0
+    while pos < len(stream) and k <= MAX_PARTS:
+        in_idx = stream[pos][0] in ("m", "i", "c")
+        head = ledger_part_head(k, path) + (index_note(path) if in_idx else "")
         out, used = [], len(head)
-        for x in rest:
-            if used + len(x) + 1 + reserve >= LIMIT:
+        while pos < len(stream):
+            kind, x = stream[pos]
+            if kind == "m" and not in_idx:  # the index starts in this part: its note must fit too
+                need = len(index_note(path)) + len(x) + 1
+                nxt = stream[pos + 1][1] if pos + 1 < len(stream) else ""
+                if used + need + len(nxt) + 1 >= HARD_MAX:
+                    break
+                used += len(index_note(path))
+                head += index_note(path)
+                in_idx = True
+            if used + len(x) + 1 >= HARD_MAX:
                 break
             out.append(x)
             used += len(x) + 1
-        return out
-    rest = lines
-    out1 = fill(ledger_part_head(1, path), rest, 0)
-    rest2 = rest[len(out1):]
-    if k == 1:
-        if out1:
-            emit(ledger_part_head(1, path) + "\n".join(out1))
-        return
-    if not rest2:
-        return
-    head = ledger_part_head(2, path)
-    out2 = fill(head, rest2, 0)
-    if len(out2) < len(rest2):  # entries remain: leave room for the final summary line
-        n = len(rest2)
-        out2 = fill(head, rest2, len("- (%d older active decisions in the full ledger; read it before acting on anything older)" % n) + 1)
-        out2.append("- (%d older active decisions in the full ledger; read it before acting on anything older)" % (n - len(out2)))
-    emit(head + "\n".join(out2))
+            pos += 1
+        if not out:
+            return None
+        parts.append(head + "\n".join(out))
+        k += 1
+    return parts if pos >= len(stream) else None
 
 
-def ledger_mode(lpart=None):
-    """F39.8: SessionStart startup/resume. Print the project's active decisions (read-only, no claude).
-    F39.10: with lpart 1|2 (compact), print that part of the whole ledger instead (each part < 10,000 chars)."""
+def plan_ledger(ents, path):
+    """F42.3: choose how many entries get full text (largest n whose layout fits with an index for the rest, index
+    lines at 90 chars, else 50, else the oldest tasks and decisions dropped from the index, never rules). Rules
+    keep full text first: n never drops below the rule count unless even that cannot fit."""
+    N = len(ents)
+    full_lines = [e["line"] for e in ents]
+    nrules = sum(1 for e in ents if e["kind"] == "rule")
+    for width in (90, 50):  # every standing rule keeps its full text while the index of the rest still fits
+        idx_all = [index_line(e, width) for e in ents]
+        for n in range(N, nrules - 1, -1):
+            r = pack(full_lines[:n], idx_all[n:], "", path)
+            if r is not None:
+                return r
+    idx_all = [index_line(e, 50) for e in ents]
+    for n in range(min(nrules, N), -1, -1):
+        rest = list(range(n, N))
+        keep_floor = sum(1 for i in rest if ents[i]["kind"] == "rule")  # rules are never dropped
+        lo, hi, best = 0, len(rest) - keep_floor, None  # d = number of oldest non-rule entries dropped
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            drop = set([i for i in reversed(rest) if ents[i]["kind"] != "rule"][:mid])
+            kept = [idx_all[i] for i in rest if i not in drop]
+            cl = f"- ({mid} more active entries not listed; read the full ledger)" if mid else ""
+            r = pack(full_lines[:n], kept, cl, path)
+            if r is not None:
+                best, hi = r, mid - 1
+            else:
+                lo = mid + 1
+        if best is not None:
+            return best
+    return []
+
+
+def ledger_mode(lpart=1):
+    """F39.8/F42.3: SessionStart (compact, startup, resume). Print part `lpart` (1-3) of the project's active
+    decisions ledger (read-only, no claude); each part < 10,000 chars."""
     import hashlib, subprocess
     d = json.load(sys.stdin)
     cwd = d.get("cwd") if isinstance(d, dict) else None
@@ -197,45 +295,31 @@ def ledger_mode(lpart=None):
     key = re.sub(r"[^A-Za-z0-9._-]", "_", os.path.basename(root.rstrip("/")))[:40] + "-" + \
         hashlib.sha1(root.encode("utf-8")).hexdigest()[:8]
     path = os.path.abspath(os.path.join(HANDOFFS_DIR, "projects", key, "decisions.md"))
-    act, sup = {}, set()
-    with open(path, encoding="utf-8", errors="replace") as f:
-        for ln in f.read().splitlines():
-            ln = ln.strip()
-            m = re.match(r"^- D(\d+) \[\d{4}-\d{2}-\d{2}\] (SUPERSEDED by D\d+ \[\d{4}-\d{2}-\d{2}\]: .+ \| because: .+|.+ \| why: .+)$", ln)
-            if m and int(m.group(1)) >= 1 and int(m.group(1)) not in act and int(m.group(1)) not in sup:
-                (sup.add(int(m.group(1))) if m.group(2).startswith("SUPERSEDED by D") else act.__setitem__(int(m.group(1)), ln))
-    lines = [act[i] for i in sorted(act, reverse=True)]
-    if not lines:
+    try:
+        ents = parse_ledger_file(path)
+    except FileNotFoundError:
+        return  # no ledger for this project: nothing to say
+    if not ents:
         return
-    if lpart:
-        emit_ledger_part(lpart, lines, path)
-        return
-    if sum(len(x) + 1 for x in lines) > 4000:  # same whole-line cut as the handoff section (F39.4)
-        room = 4000 - len("- (999 older active decisions in the full ledger)") - 1
-        out, used = [], 0
-        for x in lines:
-            if used + len(x) + 1 > room:
-                break
-            out.append(x)
-            used += len(x) + 1
-        lines = out + [f"- ({len(act) - len(out)} older active decisions in the full ledger)"]
-    emit("Project decisions from earlier sessions in this repo (newest first; full ledger: " + path
-         + "). Treat them as standing unless the user says otherwise:\n" + "\n".join(lines))
+    parts = plan_ledger(ents, path)
+    if len(parts) >= lpart:
+        emit(parts[lpart - 1])
 
 
 if "--ledger" in sys.argv[1:]:
     if os.environ.get("HANDOFF_LEDGER") == "0":  # AC 100: ledger disabled, print nothing
         sys.exit(0)
     try:
-        ledger_mode(PART if "--part" in sys.argv[1:] and PART in (1, 2) else None)
-    except BaseException:
-        pass
+        ledger_mode(PART)  # plain --ledger = --part 1 (F42.3)
+    except BaseException as _e:
+        log_error(_e)
     sys.exit(0)
 
 try:
     d = json.load(sys.stdin)
     sid = d.get("session_id")
     sid = sid.replace("/", "_") if isinstance(sid, str) else ""  # same rule as precompact-handoff.py; non-string = silent
+    _SID[0] = sid or "unknown"
     if sid:
         p = os.path.join(HANDOFFS_DIR, f"{sid}-latest.md")
         root = os.path.realpath(HANDOFFS_DIR)
@@ -279,6 +363,7 @@ try:
         except BaseException:
             if txt and PART == 1:
                 emit(plain)  # last resort: section 6 behaviour (uncut)
-except BaseException:
-    pass
+except BaseException as _e:
+    if not isinstance(_e, (SystemExit, KeyboardInterrupt)):
+        log_error(_e)
 sys.exit(0)
