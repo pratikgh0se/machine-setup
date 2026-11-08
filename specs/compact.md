@@ -323,3 +323,25 @@ Why: live data since 10-16 (scratchpad nudge-miss/report): ~50 compactions at ~3
 86. All F33/F35 statements still pass with their thresholds updated from 50k steps to 25k steps where they assert specific k values (statement 27 becomes: 324,999 none; 325,000 one; 350,000 one; jump 290k->410k arms ONE nudge reporting 410k, 102%, highest k=4; then nothing until 425k).
 
 **F41.7 Ruling (2026-10-27).** The final nudge (F41.2) is independent of T(0) and may fire before the first regular nudge (statement 82 stands). Older statements that assert the FIRST nudge's percent or threshold with `nudge_atPercent` >= 90 (e.g. the F33 clamp tests, 95/96/99 -> 380k) run with `nudge_finalPercent=0`, since they test the atPercent clamp, not the cadence.
+
+## F43 Live fill and the real ceiling (orchestrator, 2026-11-08; from scratchpad review-1108/nudge-lag)
+Why: `session.measure` fires only after each main-thread turn, so t is frozen during long tool-heavy turns (gaps to compaction of 17-20k in 3 of 16 cases, final/350k nudges missed). Claude Code auto-compacts at ~367k (`autoCompactThreshold`), not at W 400k, so T=375k never fires and the 360k final has ~7k headroom. D11's "list the user's standing rules" line was never built. The `skip` debug event is logged on every subagent call instead of once per reason per cycle (F41.4). Compact plugin 1.4.0.
+
+**F43.1 Ceiling.** `C` = `breakdown.autoCompactThreshold` from the existing `$.session.usage({breakdown:'summary'})` refresh (F33.2 timing) when it is an integer > 0, else `W - 33,000`. Regular thresholds T(k) (F33.2, F41.1) are used only while `T(k) < C - 12,000`. The final nudge (F41.2) threshold becomes `F = min(ceil(W*finalPercent/100), C - 12,000)` (W 400k, C 367k: regular 300k, 325k, 350k; final 355k). `nudge_finalPercent=0` still disables the final.
+
+**F43.2 Live fill on tool calls.** In the main-loop `tool.call` hook (not subagent calls), at most once per 10 s per session, read `$.session.usage()` and take its `context.tokens` as t when it is larger than the cached value (exception to F33.2/F33.6 "memory only" for this one throttled call; failures are swallowed and the cached t is used). The new t feeds the same arming/delivery rules (F41.3), so a nudge crossed mid-turn is delivered on that same tool call.
+
+**F43.3 Standing rules line (D11).** The nudge text (F33.3/F35/F41.2 forms) gains, right after the headings list: ` Under ## Decisions and why, list first the user's standing rules and operating mode (e.g. how many agents run in parallel, priorities, who writes tests, how to ask the user), with concrete numbers.` Length cap for the full text: 760 chars.
+
+**F43.4 Skip logging.** `skip` events are written at most once per distinct reason per cycle (F41.4 as specified); a cycle ends at reset.
+
+**F43.5 Idle.** An armed nudge with no later main-loop tool call or prompt (idle compaction) is not delivered; documented, no change (the PreCompact fresh summary and ledger cover it).
+
+**F43.6 Acceptance (contract statements 87-93).** W 400,000 via env.
+87. Breakdown with `autoCompactThreshold` 367,000: nudges at 300k, 325k, 350k and a final at 355,000 (text contains `Compaction is imminent.`); none at 375k or 360k.
+88. No `autoCompactThreshold` available: C = 367,000 (W-33k), same thresholds as 87.
+89. Live fill: cached t 349,116 from the last measure; usage() reports 356,000 on a main-loop tool.call: that tool.call result carries the k=2 nudge and the final is armed per rules (one nudge counts as both when coincident, F41.2); a subagent tool.call never calls usage().
+90. Throttle: three main-loop tool.calls within 10 s call usage() once; a fourth after 10 s calls it again. usage() throwing: no exception escapes, cached t used.
+91. usage() reports a smaller value than cached t: cached t kept.
+92. Nudge text contains the standing-rules sentence exactly once, and the full text is <= 760 chars with a 120-char agent path.
+93. 20 subagent tool.calls in one cycle write exactly one `skip` line with reason `agent_subagent`; after a compaction reset, the next subagent call writes one more.
