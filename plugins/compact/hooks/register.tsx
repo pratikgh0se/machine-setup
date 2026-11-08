@@ -23,7 +23,7 @@ import { cardText, coachSegment, statusText as coachStatus } from './mods/coach'
 import { buildPrompt, compactInstructions, kebab, missingHeadings, parseArgs } from './mods/handoff'
 import { resumeEntry } from './mods/resume'
 import { alertSegment, cardLine, clearedBody, degradedPath, parseAlert, reasonTexts, shownKey, statusPrefix, toastLine } from './mods/handoffalert'
-import { agentResumeEntry, appendDebug, dueNudge, handoffsDir, buildMeta, highestK, isFresh, isStaleSections, metaPathFor, agentPathFor, nudgeLine, nudgeText, parseEnvWindow, sectionHashes, STALE_TARGETS, threshold } from './mods/nudge'
+import { agentResumeEntry, appendDebug, compactCeiling, dueNudge, handoffsDir, buildMeta, highestK, isFresh, isStaleSections, metaPathFor, agentPathFor, nudgeLine, nudgeText, parseEnvWindow, sectionHashes, STALE_TARGETS, threshold } from './mods/nudge'
 import type { AgentFresh, NudgeDebugEvent, NudgeRt } from './mods/nudge'
 import { windowFor } from './_shared/windows'
 import { ORCH_KEY, TOAST_KEY, isLast, lastKey, pendingKey } from './store'
@@ -763,10 +763,16 @@ async function nudgeDbg($: EngineInterface, ctx: Ctx, ev: NudgeDebugEvent['ev'],
 
 /** F41.4: skip at most once per distinct reason per cycle. */
 async function nudgeSkip($: EngineInterface, ctx: Ctx, reason: string): Promise<void> {
-  const n = ctx.rt.nudge
-  if (n.skipLogged.includes(reason)) return
-  n.skipLogged.push(reason)
+  if (!markSkip(ctx, reason)) return
   await nudgeDbg($, ctx, 'skip', { reason })
+}
+
+/** F43.4: synchronous claim of a skip reason for this cycle (true = first time), so queued writers cannot double-log. */
+function markSkip(ctx: Ctx, reason: string): boolean {
+  const n = ctx.rt.nudge
+  if (n.skipLogged.includes(reason)) return false
+  n.skipLogged.push(reason)
+  return true
 }
 
 /** Home and session id -> agent file path. Needs `$`; the `tool.call` hook only reads the cached path. */
@@ -806,19 +812,21 @@ async function nudgeWindow($: EngineInterface, ctx: Ctx, now: number): Promise<n
   } catch {
     w = undefined
   }
-  if (w === undefined) {
-    if (n.rawAt == null || now - n.rawAt > 600_000) {
-      n.rawAt = now
-      try {
-        const u = await $.session.usage({ breakdown: 'summary' })
-        const r = u.context.breakdown?.rawMaxTokens
-        n.rawMax = typeof r === 'number' && r > 0 ? r : undefined
-      } catch {
-        n.rawMax = undefined
-      }
+  // F43.1: the breakdown is read (every 10 min) even with an env window, for `autoCompactThreshold`.
+  if (n.rawAt == null || now - n.rawAt > 600_000) {
+    n.rawAt = now
+    try {
+      const u = await $.session.usage({ breakdown: 'summary' })
+      const r = u.context.breakdown?.rawMaxTokens
+      n.rawMax = typeof r === 'number' && r > 0 ? r : undefined
+      const c = u.context.breakdown?.autoCompactThreshold
+      n.autoCompact = typeof c === 'number' && Number.isInteger(c) && c > 0 ? c : undefined
+    } catch {
+      n.rawMax = undefined
+      n.autoCompact = undefined
     }
-    w = n.rawMax
   }
+  if (w === undefined) w = n.rawMax
   if (w === undefined) {
     if (rt.winBad && !rt.winLogged) {
       rt.winLogged = true
@@ -880,7 +888,7 @@ function armFromCache(ctx: Ctx): { k?: number; final: boolean } | undefined {
   const n = ctx.rt.nudge
   const t = n.lastT
   if (n.armText != null || typeof t !== 'number' || !n.window || !n.agentPath) return undefined
-  const due = dueNudge(t, n.window, opts.nudgeAtPercent, opts.nudgeEvery, opts.nudgeFinalPercent, n.lastK, n.armedK, n.finalDone, n.armFinal)
+  const due = dueNudge(t, n.window, opts.nudgeAtPercent, opts.nudgeEvery, opts.nudgeFinalPercent, n.lastK, n.armedK, n.finalDone, n.armFinal, compactCeiling(n.window, n.autoCompact))
   if (!due) return undefined
   n.armText = nudgeText(t, n.window, n.agentPath, n.agentWrittenAt != null || n.agentSize != null, false, due.final)
   n.armedK = due.k
@@ -918,10 +926,12 @@ async function nudgeOnMeasure($: EngineInterface, e: { agentId?: string; context
   if (!w) await nudgeSkip($, ctx, 'no_window')
   if (w) {
     if (t < threshold(w, opts.nudgeAtPercent, opts.nudgeEvery, 0) / 2) {
-      if (hasCycleState(n)) await nudgeDbg($, ctx, 'reset', { reason: 'below_half' })
-      resetCycle(n)
+      if (hasCycleState(n)) {
+        await nudgeDbg($, ctx, 'reset', { reason: 'below_half' })
+        resetCycle(n)
+      }
     } else {
-      const due = dueNudge(t, w, opts.nudgeAtPercent, opts.nudgeEvery, opts.nudgeFinalPercent, n.lastK, n.armedK, n.finalDone, n.armFinal)
+      const due = dueNudge(t, w, opts.nudgeAtPercent, opts.nudgeEvery, opts.nudgeFinalPercent, n.lastK, n.armedK, n.finalDone, n.armFinal, compactCeiling(w, n.autoCompact))
       if (due) {
         let exists = false
         try {
@@ -969,6 +979,22 @@ async function nudgeOnMeasure($: EngineInterface, e: { agentId?: string; context
   const upkeep = n.lastNudgeAt != null || n.agentWrittenAt != null
   if (dirty || (upkeep && n.metaTokens != null && Math.abs(t - n.metaTokens) >= META_STEP)) await writeMeta($, ctx, t)
   await nudgePublish($, ctx)
+}
+
+/** F43.2: main-loop tool.call, at most once per 10 s: read the live context size; a larger value replaces the cached t. Failures swallowed. */
+const LIVE_THROTTLE_MS = 10_000
+async function nudgeLive($: EngineInterface, ctx: Ctx): Promise<void> {
+  const n = ctx.rt.nudge
+  const now = await $.clock.now()
+  if (n.liveAt != null && now - n.liveAt < LIVE_THROTTLE_MS) return
+  n.liveAt = now
+  try {
+    const u = await $.session.usage()
+    const t = u.context.tokens
+    if (typeof t === 'number' && Number.isFinite(t) && t > (n.lastT ?? -Infinity)) n.lastT = t
+  } catch {
+    // cached t stays
+  }
 }
 
 /** `tool.call`, after `next`: pure memory work plus `$.clock.after(0)` scheduling (F33.6). Appends `context` only. */
@@ -1470,10 +1496,11 @@ export const register: Register = (on, options) => {
       const r = await next(e)
       try {
         if ((e as { agentId?: string }).agentId) {
-          if (!ctx.rt.nudge.skipLogged.includes('agent_subagent')) $.clock.after(0, () => void safe(() => nudgeSkip($, ctx, 'agent_subagent')))
+          if (ctx.rt.nudge.sid && markSkip(ctx, 'agent_subagent')) $.clock.after(0, () => void safe(() => nudgeDbg($, ctx, 'skip', { reason: 'agent_subagent' })))
           return r
         }
         if (r.deny !== undefined) return r
+        await safe(() => nudgeLive($, ctx))
         return nudgeToolCall($, e, r, ctx)
       } catch {
         return r

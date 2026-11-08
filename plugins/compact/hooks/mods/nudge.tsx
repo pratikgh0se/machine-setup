@@ -99,14 +99,27 @@ export const clampFinal = (n: number): number => (n <= 0 ? 0 : Math.min(99, Math
 /** F41.2: F = ceil(W * finalPercent / 100). */
 export const finalThreshold = (w: number, finalPercent: number): number => Math.ceil((w * finalPercent) / 100)
 
+/** F43.1: headroom kept below the real compaction ceiling, and the fallback gap when the breakdown has no threshold. */
+export const CEILING_HEADROOM = 12_000
+export const CEILING_GAP = 33_000
+/** F43.1: C = breakdown `autoCompactThreshold` when an integer > 0, else W - 33,000. */
+export function compactCeiling(w: number, autoCompactThreshold?: unknown): number {
+  return typeof autoCompactThreshold === 'number' && Number.isInteger(autoCompactThreshold) && autoCompactThreshold > 0 ? autoCompactThreshold : w - CEILING_GAP
+}
+
 /**
- * F41.2/F41.3: what is due at context size `t`. `k` is set when a regular step above `max(lastK, armedK)` is due;
- * `final` is true when the final nudge is due (or already armed) and has not been delivered this cycle. Undefined = nothing to arm.
+ * F41.2/F41.3 with F43.1: what is due at context size `t`. `k` is set when a regular step above `max(lastK, armedK)` is due and
+ * T(k) < C - 12,000; `final` is true when the final nudge is due (or already armed) and has not been delivered this cycle, where
+ * F = min(ceil(W*finalPercent/100), C - 12,000). Undefined = nothing to arm. `ceiling` absent = W - 33,000.
  */
-export function dueNudge(t: number, w: number, atPercent: number, every: number, finalPercent: number, lastK: number, armedK: number | undefined, finalDone: boolean, armFinal: boolean): { k?: number; final: boolean } | undefined {
-  const hk = highestK(t, w, atPercent, every)
+export function dueNudge(t: number, w: number, atPercent: number, every: number, finalPercent: number, lastK: number, armedK: number | undefined, finalDone: boolean, armFinal: boolean, ceiling: number = compactCeiling(w)): { k?: number; final: boolean } | undefined {
+  const limit = ceiling - CEILING_HEADROOM
+  let hk = highestK(t, w, atPercent, every)
+  const t0 = threshold(w, atPercent, every, 0)
+  const kMax = t0 < limit ? Math.ceil((limit - t0) / every) - 1 : -1
+  if (hk > kMax) hk = kMax
   const kNew = hk > Math.max(lastK, armedK ?? -1)
-  const fDue = finalPercent > 0 && !finalDone && !armFinal && t >= finalThreshold(w, finalPercent)
+  const fDue = finalPercent > 0 && !finalDone && !armFinal && t >= Math.min(finalThreshold(w, finalPercent), limit)
   if (!kNew && !fDue) return undefined
   return { k: kNew ? hk : undefined, final: armFinal || fDue }
 }
@@ -137,9 +150,11 @@ export const metaPathFor = (home: string, sid: string): string => `${handoffsDir
 
 /** F35.3 text (supersedes F33.3), built at arm time. `verb` is `update` when the file exists, else `write`. */
 export const STALE_SENTENCE = 'Your last handoff is STALE: "Parallel work running", "In progress" and "Exact next step" are unchanged since the previous nudge; rewrite them from scratch, do not append.'
+/** F43.3: standing rules line (D11), right after the headings list. */
+export const STANDING_SENTENCE = " Under ## Decisions and why, list first the user's standing rules and operating mode (e.g. how many agents run in parallel, priorities, who writes tests, how to ask the user), with concrete numbers."
 export function nudgeText(t: number, w: number, path: string, exists: boolean, stale = false, imminent = false): string {
   const pct = Math.floor((t * 100) / w)
-  return `[compact] Context is ${pct}% of the auto-compact window (${kfmt(t)} of ${kfmt(w)}).${imminent ? ' Compaction is imminent.' : ''} Compaction will drop your working memory.${stale ? ` ${STALE_SENTENCE}` : ''} Now, in one Write call, ${exists ? 'update' : 'write'} ${path} (create the folder if missing) with exactly these headings: ${HEADINGS.join(', ')}. Under Parallel work running list every builder or helper agent running or queued (name, unit, branch or card, state) and each factory lane (running / ready / blocked on); 'none' is an incident to fix, not a valid steady state. REWRITE "Parallel work running", "In progress" and "Exact next step" in place for the current state; never append "DONE since" notes. Move finished items to "Done". Keep the whole file under 5000 chars. Use real paths, commands and ids; no secrets. Then continue the task.`
+  return `[compact] Context is ${pct}% of the auto-compact window (${kfmt(t)} of ${kfmt(w)}).${imminent ? ' Compaction is imminent.' : ''}${stale ? ` ${STALE_SENTENCE}` : ''} In one Write call, ${exists ? 'update' : 'write'} ${path} with exactly these headings: ${HEADINGS.join(', ')}.${STANDING_SENTENCE} Parallel work running: every agent and factory lane (name, state). Rewrite Parallel work running, In progress, Exact next step in place; never append. Max 5000 chars. Then go on.`
 }
 
 /** F33.11 Resume entry for the agent file (<= 240 chars with a normal path). */
@@ -180,6 +195,10 @@ export type NudgeRt = {
   /** `rawMaxTokens` from the usage breakdown and when it was read. */
   rawMax?: number
   rawAt?: number
+  /** F43.1: `autoCompactThreshold` from the same breakdown read. */
+  autoCompact?: number
+  /** F43.2: when `$.session.usage()` was last called on a tool call (epoch ms). */
+  liveAt?: number
   lastK: number
   armedK?: number
   armText?: string

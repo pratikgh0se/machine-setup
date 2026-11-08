@@ -2,6 +2,12 @@
 
 All notable changes are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.4.0] - 2026-11-08
+
+### Changed
+
+- Compact plugin 1.4.0 (F43): the handoff nudge now reads the live context size on main-loop tool calls (at most once per 10 s) instead of waiting for the end of a turn, so long tool-heavy turns no longer skip nudges. Regular notes and the final note stay 12,000 tokens below the real compaction ceiling (`autoCompactThreshold`, else window minus 33,000): with a 400k window, 300k, 325k, 350k and a final at 355k. The note now asks the model to list your standing rules and operating mode first under Decisions and why (D11). The `skip` debug event is written once per reason per cycle.
+
 ## [1.3.0] - 2026-10-27
 
 ### Changed

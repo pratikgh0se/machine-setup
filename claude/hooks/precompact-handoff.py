@@ -10,7 +10,7 @@ if os.environ.get("HANDOFF_HOOK_CHILD"):  # spawned by our own summary call: nev
     sys.exit(0)
 
 _T0 = time.monotonic()
-HOOK_VERSION = "1.6.0"
+HOOK_VERSION = "1.5.0"
 HOME = os.path.expanduser("~")
 HANDOFFS_DIR = (os.environ.get("HANDOFF_STATE_DIR") or "").strip() or os.path.join(HOME, ".local", "state", "claude-handoffs")
 HEALTH_FILE = os.path.join(HANDOFFS_DIR, "health.jsonl")
@@ -517,41 +517,20 @@ BACKUPS_KEEP = 20
 LEDGER_SYSTEM = "You maintain a project's decisions ledger for an AI coding agent. Output only the ledger."
 LEDGER_PROMPT = ("Stdin has the CURRENT LEDGER, then NEW CONVERSATION since it was last updated. "
                  "Output only the changes, one per line, nothing else: new decisions as "
-                 "\"- D<n> [YYYY-MM-DD] [rule|decision|task] <decision> | why: <reason>\" with n continuing after the highest "
+                 "\"- D<n> [YYYY-MM-DD] <decision> | why: <reason>\" with n continuing after the highest "
                  "existing id, and replacements as \"SUPERSEDE D<old> BY D<new>: <reason>\" where D<new> is an "
                  "existing or newly added id. Output \"NO CHANGES\" if nothing qualifies. Rules: keep every existing entry and its id. "
                  "Add an entry only for a decision the user made or explicitly approved (a choice, a rule, a "
                  "constraint, a permission, a rejected option), dated with the day it was made. When the user "
                  "replaces an earlier decision, rewrite that entry as SUPERSEDED by the new id with the reason; "
                  "never delete entries. Do not record plans, progress or the assistant's own unapproved proposals. "
-                 "Format of active lines: \"- D<n> [YYYY-MM-DD] [rule|decision|task] <decision> | why: <reason>\". Format of superseded "
+                 "Format of active lines: \"- D<n> [YYYY-MM-DD] <decision> | why: <reason>\". Format of superseded "
                  "lines: \"- D<n> [YYYY-MM-DD] SUPERSEDED by D<m> [YYYY-MM-DD]: <old decision> | because: <reason>\". "
                  "Keep the ledger lean: when a new decision changes, narrows or repeats an older one, rewrite the "
                  "older entry as SUPERSEDED by the new id (because: replaced, narrowed or merged). Two active "
                  "entries must never say the same thing or contradict each other. When you merge or narrow "
-                 "entries, keep every concrete value from both (names, numbers, paths, limits, schedules). "
-                 # F42.2
-                 "Tag each new entry [rule], [decision] or [task]. Record operating modes and the user's working "
-                 "preferences as [rule] entries the moment the user states them (for example how many agents run in "
-                 "parallel, priority order, who writes tests, how to ask the user questions), with the concrete "
-                 "numbers. One-off approvals and status updates are [task]. When an active [task] is done or was a "
-                 "one-off already acted on, output \"RESOLVE D<n>: <reason>\". When two active entries contradict "
-                 "each other, SUPERSEDE the older one. For untagged existing entries you may output "
-                 "\"KIND D<n> rule|decision|task\" (at most 40).")
-MAINT_PROMPT = ("Stdin has a project's decisions LEDGER (one entry per line). Output ONLY maintenance lines, one per "
-                "line, nothing else, no prose: \"KIND D<n> rule|decision|task\" to tag an untagged active entry; "
-                "\"RESOLVE D<n>: <reason>\" for an active task or untagged entry that is finished or was a one-off "
-                "approval, action or status already acted on; \"SUPERSEDE D<old> BY D<new>: <reason>\" when two "
-                "active entries contradict each other or say the same thing (old and new are existing ids; the newer "
-                "entry is D<new>). Kinds: rule = a standing rule, preference, priority, operating mode or process "
-                "that applies until replaced (how many builders run in parallel, who writes tests, how the user wants "
-                "to be asked, what to never do, naming, priority order); decision = a design, product or technical "
-                "choice; task = a one-off approval, action or status that is finished once done. Tag every untagged "
-                "active entry. Never add entries, never edit entry text, never RESOLVE a rule. Output \"NO CHANGES\" "
-                "if nothing applies.")
+                 "entries, keep every concrete value from both (names, numbers, paths, limits, schedules).")
 ACT_RE = re.compile(r"^- D(\d+) \[(\d{4}-\d{2}-\d{2})\] (.+?) \| why: (.+)$")
-RES_RE = re.compile(r"^- D(\d+) \[(\d{4}-\d{2}-\d{2})\] RESOLVED \[(\d{4}-\d{2}-\d{2})\]: (.+?) \| was: (.+)$")
-TAG_RE = re.compile(r"^\[(rule|decision|task)\] ")
 SUP_RE = re.compile(r"^- D(\d+) \[(\d{4}-\d{2}-\d{2})\] SUPERSEDED by D(\d+) \[(\d{4}-\d{2}-\d{2})\]: (.+?) \| because: (.+)$")
 
 
@@ -596,16 +575,8 @@ def ledger_dir(root):
 
 
 def parse_entry(line):
-    """One ledger line -> dict(id, kind, line, by, tag) or None. kind is act|sup|res; tag (F42.1) is
-    rule|decision|task|None for an active entry. Over-long lines are cut with `...` (F39.2)."""
+    """One ledger line -> dict(id, kind, line, by) or None. Over-long lines are cut with `...` (F39.2)."""
     line = (line or "").rstrip("\r\n").strip()
-    m = RES_RE.match(line)
-    if m:
-        pre = f"- D{m.group(1)} [{m.group(2)}] RESOLVED [{m.group(3)}]: {m.group(4)} | was: "
-        was = m.group(5)
-        if len(pre) + len(was) > LEDGER_LINE_MAX:
-            was = was[: max(LEDGER_LINE_MAX - len(pre) - 3, 0)] + "..."
-        return None if int(m.group(1)) < 1 else {"id": int(m.group(1)), "kind": "res", "line": pre + was, "by": None, "tag": None}
     m = SUP_RE.match(line)
     if m:
         pre = f"- D{m.group(1)} [{m.group(2)}] SUPERSEDED by D{m.group(3)} [{m.group(4)}]: "
@@ -632,8 +603,7 @@ def parse_entry(line):
             why = "..."
             dec = dec[: max(len(dec) - over - 3, 0)] + "..."
         full = pre + dec + sep + why
-    tm = TAG_RE.match(dec) if kind == "act" else None
-    return {"id": int(m.group(1)), "kind": kind, "line": full, "by": by, "tag": tm.group(1) if tm else None}
+    return {"id": int(m.group(1)), "kind": kind, "line": full, "by": by}
 
 
 def parse_ledger(text):
@@ -744,53 +714,21 @@ def merge_items(path, since_ms):
 
 
 SUPERSEDE_RE = re.compile(r"^SUPERSEDE D(\d+) BY D(\d+): (.+)$")
-RESOLVE_RE = re.compile(r"^RESOLVE D(\d+): (.+)$")
-KIND_RE = re.compile(r"^KIND D(\d+) (rule|decision|task)$")
-KIND_LIMIT = 40  # F42.2: KIND lines applied per merge
 
 
-def apply_changes(prev, out_text, allow_new=True, kind_limit=KIND_LIMIT, stats=None):
-    """F40.1 + F42.2: apply the model's ADD / KIND / RESOLVE / SUPERSEDE lines to the previous entries.
-    Returns (entries, n_changes); entries is a new dict, `prev` is untouched. Invalid lines are ignored.
-    Never removes an entry. allow_new=False (maintenance) ignores new entries; kind_limit None = no limit.
-    `stats` (dict) receives counts add/kind/resolved/superseded."""
+def apply_changes(prev, out_text):
+    """F40.1: apply the model's ADD / SUPERSEDE lines to the previous entries. Returns (entries, n_changes);
+    entries is a new dict, `prev` is untouched. Invalid lines are ignored. Never removes an entry."""
     res = dict(prev)
-    st = {"add": 0, "kind": 0, "resolved": 0, "superseded": 0}
     prev_max = max(prev) if prev else 0
     lines = [(ln or "").strip() for ln in (out_text or "").splitlines()]
+    changes = 0
+    for ln in lines:
+        e = parse_entry(ln)
+        if e and e["kind"] == "act" and e["id"] > prev_max and e["id"] not in res:
+            res[e["id"]] = e
+            changes += 1
     today = datetime.date.today().isoformat()
-    if allow_new:
-        for ln in lines:
-            e = parse_entry(ln)
-            if e and e["kind"] == "act" and e["id"] > prev_max and e["id"] not in res:
-                res[e["id"]] = e
-                st["add"] += 1
-    for ln in lines:  # F42.2 KIND: tag an untagged active entry (text otherwise unchanged)
-        m = KIND_RE.match(ln)
-        if not m or (kind_limit is not None and st["kind"] >= kind_limit):
-            continue
-        i = int(m.group(1))
-        am = ACT_RE.match(res[i]["line"]) if i in res and res[i]["kind"] == "act" and res[i].get("tag") is None else None
-        if not am:
-            continue
-        e = parse_entry(f"- D{i} [{am.group(2)}] [{m.group(2)}] {am.group(3)} | why: {am.group(4)}")
-        if e:
-            res[i] = e
-            st["kind"] += 1
-    for ln in lines:  # F42.2 RESOLVE: only an active task or untagged entry; a rule is never resolved
-        m = RESOLVE_RE.match(ln)
-        if not m:
-            continue
-        i, why = int(m.group(1)), m.group(2).strip()
-        if i not in res or res[i]["kind"] != "act" or res[i].get("tag") not in (None, "task") or not why:
-            continue
-        pm = re.match(r"^(- D\d+ \[\d{4}-\d{2}-\d{2}\]) (.+)$", res[i]["line"])
-        if not pm:
-            continue
-        e = parse_entry(f"{pm.group(1)} RESOLVED [{today}]: {why} | was: {pm.group(2)}")
-        if e:
-            res[i] = e
-            st["resolved"] += 1
     for ln in lines:
         m = SUPERSEDE_RE.match(ln)
         if not m:
@@ -804,10 +742,8 @@ def apply_changes(prev, out_text, allow_new=True, kind_limit=KIND_LIMIT, stats=N
         sup = parse_entry(f"- D{old} [{am.group(2)}] SUPERSEDED by D{new} [{today}]: {am.group(3)} | because: {why}")
         if sup:
             res[old] = sup
-            st["superseded"] += 1
-    if stats is not None:
-        stats.update(st)
-    return res, sum(st.values())
+            changes += 1
+    return res, changes
 
 
 def prune_backups(ddir):
@@ -823,8 +759,7 @@ def prune_backups(ddir):
 
 def ledger_counts(entries):
     return (sum(1 for e in entries.values() if e["kind"] == "act"),
-            sum(1 for e in entries.values() if e["kind"] == "sup"),
-            sum(1 for e in entries.values() if e["kind"] == "res"))
+            sum(1 for e in entries.values() if e["kind"] == "sup"))
 
 
 def ledger_error_of(err):
@@ -901,62 +836,6 @@ def ledger_merge(sid, tp, root, led, timeout):
         try:
             if lock is not None:
                 lock.close()  # releases the flock
-        except Exception:
-            pass
-
-
-MAINTAIN_TIMEOUT = 300  # F42.4
-
-
-def ledger_maintain(dirarg):
-    """F42.4: `--ledger-maintain <dir>`: one maintenance pass over the whole ledger of the repo containing <dir>.
-    Asks the merge model ONLY for KIND / RESOLVE / SUPERSEDE lines (no new entries, no text edits), applies them under
-    the ledger lock, prints one summary line. Always returns normally (exit 0)."""
-    if not ledger_enabled():
-        return
-    if fcntl is None:
-        print("maintain failed: NoFcntl")
-        return
-    root = project_root(os.path.abspath(dirarg))
-    ddir = ledger_dir(root)
-    lpath = os.path.join(ddir, "decisions.md")
-    lock = None
-    try:
-        os.makedirs(ddir, exist_ok=True)
-        lock = open(os.path.join(ddir, "decisions.lock"), "a+")
-        t0 = time.monotonic()
-        while True:
-            try:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except OSError:
-                if time.monotonic() - t0 >= LOCK_WAIT_S:
-                    print("maintain failed: locked")
-                    return
-                time.sleep(0.1)
-        prev_text = read_text(lpath)
-        prev = parse_ledger(prev_text)
-        before = ledger_counts(prev)[0]
-        if not prev:
-            print(f"kind=0 resolved=0 superseded=0 active_before=0 active_after=0")
-            return
-        ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        write_atomic(os.path.join(ddir, f"decisions.{ts}.md"), prev_text)  # F39.6 backup first
-        prune_backups(ddir)
-        out, err = run_claude("LEDGER:\n" + prev_text.rstrip("\n"), LEDGER_SYSTEM, MAINT_PROMPT, ledger_model(), MAINTAIN_TIMEOUT)
-        if err or out is None:
-            print(f"maintain failed: {ledger_error_of(err)}")
-            return
-        stats = {}
-        res, changes = apply_changes(prev, out, allow_new=False, kind_limit=None, stats=stats)
-        if changes:
-            write_atomic(lpath, ledger_text(root, res))
-        print(f"kind={stats.get('kind', 0)} resolved={stats.get('resolved', 0)} superseded={stats.get('superseded', 0)} "
-              f"active_before={before} active_after={ledger_counts(res)[0]}")
-    finally:
-        try:
-            if lock is not None:
-                lock.close()
         except Exception:
             pass
 
@@ -1118,7 +997,7 @@ def build(d, info):
     if root is not None:
         def _ledger_section():
             ents = parse_ledger(read_text(os.path.join(ledger_dir(root), "decisions.md")))
-            info["ledger_active"], info["ledger_superseded"], info["ledger_resolved"] = ledger_counts(ents)
+            info["ledger_active"], info["ledger_superseded"] = ledger_counts(ents)
             info["ledger_chars"] = sum(len(e["line"]) for e in ents.values() if e["kind"] == "act")
             return ""  # F39.10: the ledger is injected by postcompact-inject.py --ledger --part 1|2, not in latest.md
         lblock = guard("decisions", info, _ledger_section)
@@ -1231,40 +1110,6 @@ def append_health(line):
         pass
 
 
-def log_error(sid, exc):
-    """F42.6: one JSON line {ts, hook, version, sid, error, trace} in <state>/hooks-error.jsonl (rotated to .1 above
-    1,000,000 bytes). Never raises."""
-    try:
-        import traceback
-        path = os.path.join(HANDOFFS_DIR, "hooks-error.jsonl")
-        os.makedirs(HANDOFFS_DIR, exist_ok=True)
-        try:
-            if os.path.getsize(path) > 1000000:
-                os.replace(path, path + ".1")
-        except OSError:
-            pass
-        tr = traceback.format_exception(type(exc), exc, exc.__traceback__)
-        tr = "".join(tr).rstrip("\n").splitlines()[-20:]
-        with open(path, "a", encoding="utf-8") as f:
-            f.write(json.dumps({"ts": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                                "hook": "precompact", "version": HOOK_VERSION, "sid": str(sid)[:36],
-                                "error": f"{type(exc).__name__}: {exc}"[:300], "trace": tr}) + "\n")
-    except BaseException:
-        pass
-
-
-def is_subagent(d):
-    """F42.5. A subagent compaction is recognised by a non-empty `agent_id` in the input, or a transcript_path under
-    /subagents/. Verified against Claude Code 2.1.316 (binary strings, 2026-11-08) and 102 recorded handoffs: the
-    PreCompact input is built from the SESSION (session_id = parent's, transcript_path = the parent's main
-    transcript, no agent_id), so a subagent compaction currently looks identical to a parent one and neither test
-    fires. Both are kept for versions that add the field (SubagentStop already carries agent_id and
-    agent_transcript_path)."""
-    aid = d.get("agent_id")
-    tp = d.get("transcript_path")
-    return (isinstance(aid, str) and bool(aid.strip())) or (isinstance(tp, str) and "/subagents/" in tp)
-
-
 def main():
     try:
         d = json.load(sys.stdin)
@@ -1274,18 +1119,9 @@ def main():
         d = {}
     sid_raw = d.get("session_id")
     sid = str(sid_raw or "unknown").replace("/", "_")
-    if is_subagent(d):  # F42.5: health line only; no dump, no latest, no ledger merge, no sidecar, no cleanup
-        try:
-            os.makedirs(HANDOFFS_DIR, exist_ok=True)
-        except Exception:
-            pass
-        sub = {"agent_file": "absent", "stale_sections": [], "fallback": "skipped", "errors": [], "truncated": False,
-               "ledger": "skipped"}
-        write_health(d, sid, sub, "", status_override="subagent", sidecar=False)
-        return
     info = {"agent_file": "absent", "stale_sections": [], "fallback": "skipped", "errors": [], "truncated": False,
             "ledger": "none" if ledger_enabled() else "disabled", "ledger_active": 0, "ledger_superseded": 0,
-            "ledger_resolved": 0, "ledger_restored": 0, "ledger_chars": 0, "ledger_error": ""}
+            "ledger_restored": 0, "ledger_chars": 0, "ledger_error": ""}
     body = ""
     try:
         try:
@@ -1296,8 +1132,6 @@ def main():
             body = build(d, info)
         except BaseException as e:
             info["errors"].append("toplevel")
-            info["hard_error"] = True  # F42.6: health status "error"
-            log_error(sid, e)
             body = minimal_handoff(d, sid, type(e).__name__)
         try:
             ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -1325,12 +1159,8 @@ def main():
         pass
 
 
-def write_health(d, sid, info, body, status_override=None, sidecar=True):
+def write_health(d, sid, info, body):
     status, reasons = compute_status(info)
-    if status_override:
-        status = status_override
-    elif info.get("hard_error"):
-        status = "error"  # F42.6; the sidecar stays degraded so the inject hook still flags it
     trig = d.get("trigger")
     line = {
         "ts": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -1343,7 +1173,6 @@ def write_health(d, sid, info, body, status_override=None, sidecar=True):
         "ledger": info.get("ledger", "none"),
         "ledger_active": info.get("ledger_active", 0),
         "ledger_superseded": info.get("ledger_superseded", 0),
-        "ledger_resolved": info.get("ledger_resolved", 0),
         "ledger_restored": info.get("ledger_restored", 0),
         "ledger_chars": info.get("ledger_chars", 0),
         "ledger_error": info.get("ledger_error", ""),
@@ -1359,28 +1188,18 @@ def write_health(d, sid, info, body, status_override=None, sidecar=True):
     try:
         side = dict(line)
         side["reasons"] = reasons
-        side["degraded"] = status in ("degraded", "error")
-        if not sidecar:
-            raise OSError("no sidecar")
+        side["degraded"] = status == "degraded"
         write_atomic(os.path.join(HANDOFFS_DIR, f"{sid}-last-health.json"), json.dumps(side))
     except Exception:
         pass
     try:
-        if not d.get("session_id") and not (os.environ.get("HANDOFF_STATE_DIR") or "").strip() and sys.stdin.isatty():
-            return  # F42.6: a manual run with no session id never touches the live log
         append_health(json.dumps(line))
     except Exception:
         pass
 
 
 try:
-    if "--ledger-maintain" in sys.argv[1:]:
-        _a = sys.argv[1:]
-        _i = _a.index("--ledger-maintain")
-        ledger_maintain(_a[_i + 1] if _i + 1 < len(_a) else os.getcwd())
-    else:
-        main()
-except BaseException as _e:
-    if not isinstance(_e, (SystemExit, KeyboardInterrupt)):
-        log_error("unknown", _e)
+    main()
+except BaseException:
+    pass
 sys.exit(0)
