@@ -911,15 +911,24 @@ MAINTAIN_TIMEOUT = 300  # F42.4
 def ledger_maintain(dirarg):
     """F42.4: `--ledger-maintain <dir>`: one maintenance pass over the whole ledger of the repo containing <dir>.
     Asks the merge model ONLY for KIND / RESOLVE / SUPERSEDE lines (no new entries, no text edits), applies them under
-    the ledger lock, prints one summary line. Always returns normally (exit 0)."""
+    the ledger lock, prints one summary line. Input checks run first, before HANDOFF_LEDGER and before anything is
+    created: <dir> not an existing directory -> stderr `ledger-maintain: no such directory: <dir>`, exit 2; no
+    decisions.md for its project -> stdout `no ledger for <dir>`, exit 0 (no folder or lock created). Otherwise
+    returns normally (exit 0)."""
+    if not os.path.isdir(dirarg):
+        print(f"ledger-maintain: no such directory: {dirarg}", file=sys.stderr)
+        sys.exit(2)
+    root = project_root(os.path.abspath(dirarg))
+    ddir = ledger_dir(root)
+    lpath = os.path.join(ddir, "decisions.md")
+    if not os.path.exists(lpath):
+        print(f"no ledger for {dirarg}")
+        return
     if not ledger_enabled():
         return
     if fcntl is None:
         print("maintain failed: NoFcntl")
         return
-    root = project_root(os.path.abspath(dirarg))
-    ddir = ledger_dir(root)
-    lpath = os.path.join(ddir, "decisions.md")
     lock = None
     try:
         os.makedirs(ddir, exist_ok=True)
@@ -1373,6 +1382,7 @@ def write_health(d, sid, info, body, status_override=None, sidecar=True):
         pass
 
 
+_exit_code = 0
 try:
     if "--ledger-maintain" in sys.argv[1:]:
         _a = sys.argv[1:]
@@ -1381,6 +1391,8 @@ try:
     else:
         main()
 except BaseException as _e:
-    if not isinstance(_e, (SystemExit, KeyboardInterrupt)):
+    if isinstance(_e, SystemExit):
+        _exit_code = _e.code if isinstance(_e.code, int) else 0  # F42.4: --ledger-maintain exits 2 on a bad dir
+    elif not isinstance(_e, KeyboardInterrupt):
         log_error("unknown", _e)
-sys.exit(0)
+sys.exit(_exit_code)
