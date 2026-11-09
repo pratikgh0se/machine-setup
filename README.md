@@ -166,7 +166,7 @@ This repository is the generic, public half of a personal setup. Everything spec
 
 Personal values must never reach the public repo. `setup/export.sh` sends them to the overlay, a pre-commit hook (enable it with `git config core.hooksPath setup/githooks`) and CI run `setup/leak-scan.sh`, and `setup/secret-scan.sh` scans exports.
 
-Autosync commits this repo locally and never pushes it; after review you publish with `setup/publish.sh --push`. Run `setup/publish.sh` with no arguments to see the pending commits and diffstat; `--push` leak-scans the unpushed range first and pushes only if it is clean ([ADR 0012](docs/adr/0012-public-push-gate.md)).
+Export skips any public file whose repo version is newer than the live copy (`skip (repo newer)`), so autosync cannot revert a committed-but-not-yet-installed change. Autosync commits this repo locally and never pushes it; after review you publish with `setup/publish.sh --push`. Run `setup/publish.sh` with no arguments to see the pending commits and diffstat; `--push` leak-scans the unpushed range first and pushes only if it is clean ([ADR 0012](docs/adr/0012-public-push-gate.md)).
 
 ## How it is tested
 

@@ -94,7 +94,7 @@ Rendered from `launchd/*.plist.tmpl` by bootstrap with `--launchd` (placeholders
 | Script | Role |
 |---|---|
 | `setup/bootstrap.sh` | Installs the generic setup onto `$HOME`: directories, hooks, merged `settings.json`, `CLAUDE.md`, plugins, optional launchd jobs and repo clones. Idempotent; backs up anything it overwrites to `~/.machine-setup-backup/<timestamp>/`; `--dry-run` changes nothing. |
-| `setup/export.sh` | Captures the live machine. Personal values go only to the overlay; the public repo changes only for generic files that already exist in it. Refuses without an overlay. |
+| `setup/export.sh` | Captures the live machine. Personal values go only to the overlay; the public repo changes only for generic files that already exist in it, and never reverts one whose repo version is newer than the live copy (`skip (repo newer)`). Refuses without an overlay. |
 | `setup/autosync.sh` | Daily pull, export and commit in both repos; pushes the overlay, holds the public push ([ADR 0012](docs/adr/0012-public-push-gate.md)). |
 | `setup/publish.sh` | Shows unpushed public commits; with `--push`, leak-scans them and pushes. |
 | `setup/leak-scan.sh` | Blocks personal values and secrets from the public repo (pre-commit hook, export, publish, CI). |

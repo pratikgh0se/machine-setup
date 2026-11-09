@@ -4,4 +4,6 @@ Bootstrap, export and secret-scan scripts that capture and restore a Claude Code
 
 Scripts: `bootstrap.sh`, `export.sh`, `autosync.sh`, `publish.sh`, `secret-scan.sh`, `leak-scan.sh` (enable the pre-commit hook with `git config core.hooksPath setup/githooks`). Read their header comments for usage, and see [`../PREREQS.md`](../PREREQS.md) for the tools they expect, [`../claude/settings.template.md`](../claude/settings.template.md) for the settings template, and [`../OVERLAY.md`](../OVERLAY.md) for what intentionally stays out of this public repo.
 
+Export never overwrites a public file that is newer in the repo than the live copy (repo commits after the live mtime, or uncommitted changes): it prints `skip (repo newer) <rel>` (`would skip` with `--dry-run`), so a version committed but not yet installed live is not reverted.
+
 Autosync commits the public repo locally and never pushes it; after review you publish with `setup/publish.sh --push` (run it without arguments to see what is pending).

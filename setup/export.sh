@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # export.sh: capture the LIVE machine. Personal values go ONLY to the private overlay; the public repo changes only for
-# generic files that already exist in it (hooks, commands, skills, agents, output-styles, keybindings). Idempotent.
-#   export.sh [--dry-run|-n]     --dry-run lists `would write [overlay|public] <rel>`, writes nothing
+# generic files that already exist in it (hooks, commands, skills, agents, output-styles, keybindings, CLAUDE.md). Idempotent.
+# A public file is never reverted to an older live copy: if the repo version is newer than the live file (repo commits after
+# the live mtime, or uncommitted repo changes) it is skipped and reported as `skip (repo newer) <rel>`.
+#   export.sh [--dry-run|-n]     --dry-run lists `would write [overlay|public] <rel>` and `would skip (repo newer) <rel>`, writes nothing
 # Needs an overlay (MACHINE_SETUP_PRIVATE or ../machine-setup-private); without one it exits 3 and writes nothing.
 # Secrets become "__SECRET:<NAME>__" placeholders; secret-scan.sh (both repos) and leak-scan.sh must pass or this exits non-zero.
 set -euo pipefail
@@ -86,15 +88,32 @@ python3 "$ROOT/lib/plugins.py" "$C/plugins" "$C/settings.json" "$NEW/claude/plug
 rewrite_home "$NEW/claude/plugins.json"
 say "plugins.json"
 
+# repo_newer REL LIVE : true when the public repo file is newer than the live copy (never revert it): the repo has
+# commits after the live file's mtime, or uncommitted changes to it. Guards the nightly autosync against reverting
+# a version committed in the repo but not yet installed live.
+mtime() { stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null || echo 0; }
+repo_newer() {
+  local rel="$1" live="$2" ct
+  [ -n "$(git -C "$REPO" status --porcelain -- "$rel" 2>/dev/null)" ] && return 0
+  ct="$(git -C "$REPO" log -1 --format=%ct -- "$rel" 2>/dev/null || true)"
+  [ "${ct:-0}" -gt "$(mtime "$live")" ]
+}
+: > "$TMP/skips"
+
 # split the staged items: file already in the public tree -> public refresh; otherwise -> overlay
 while IFS= read -r -d '' f; do
   rel="${f#$STAGE/claude/}"
   if [ -f "$REPO/claude/$rel" ] && [ ! -f "$OVERLAY/claude/$rel" ]; then  # overlay-owned files never go to the public repo
-    cmp -s "$f" "$REPO/claude/$rel" || { mkdir -p "$PUBNEW/claude/$(dirname "$rel")"; cp "$f" "$PUBNEW/claude/$rel"; }
+    if ! cmp -s "$f" "$REPO/claude/$rel"; then
+      if repo_newer "claude/$rel" "$C/$rel"; then printf '%s\n' "claude/$rel" >> "$TMP/skips"
+      else mkdir -p "$PUBNEW/claude/$(dirname "$rel")"; cp "$f" "$PUBNEW/claude/$rel"; fi
+    fi
   else
     mkdir -p "$NEW/claude/$(dirname "$rel")"; cp -p "$f" "$NEW/claude/$rel"
   fi
 done < <(find "$STAGE/claude" -type f -print0 | LC_ALL=C sort -z)
+if [ $DRY -eq 1 ]; then SKIPMSG="would skip (repo newer)"; else SKIPMSG="skip (repo newer)"; fi
+while IFS= read -r sk; do say "$SKIPMSG $sk"; done < "$TMP/skips"
 for pf in $(cd "$REPO" && { find claude/hooks claude/commands claude/skills claude/agents claude/output-styles -type f 2>/dev/null; [ -f claude/keybindings.json ] && echo claude/keybindings.json; } | LC_ALL=C sort); do
   [ -f "$STAGE/${pf}" ] || say "public: $pf not on this machine, left unchanged"
 done
