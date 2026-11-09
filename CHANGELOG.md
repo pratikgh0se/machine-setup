@@ -2,11 +2,18 @@
 
 All notable changes are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [1.4.0] - 2026-11-08
+## [1.4.0] - 2026-11-09
+
+### Added
+
+- Handoff hooks 1.6.0 (F42): each decision is tagged as a rule, decision or task, and finished items can be marked RESOLVED. After compaction and at startup or resume, rules go in first in full, and an index covers the rest so no decision is dropped (3 parts). `--ledger-maintain <repo>` tidies an existing list. Hook errors are logged to `hooks-error.jsonl`.
+- Compact plugin 1.4.0 (F43.7): a seventh generic heading, "Parallel work running".
 
 ### Changed
 
-- Compact plugin 1.4.0 (F43): the handoff nudge now reads the live context size on main-loop tool calls (at most once per 10 s) instead of waiting for the end of a turn, so long tool-heavy turns no longer skip nudges. Regular notes and the final note stay 12,000 tokens below the real compaction ceiling (`autoCompactThreshold`, else window minus 33,000): with a 400k window, 300k, 325k, 350k and a final at 355k. The note now asks the model to list your standing rules and operating mode first under Decisions and why (D11). The `skip` debug event is written once per reason per cycle.
+- Compact plugin 1.4.0 (F43): the reminder ceiling now uses the real compaction point (about 367k), and the final reminder fires about 12k before it. Fill is measured live during long turns (on tool calls, at most once per 10 s). A standing-rules line is added. The skip log is written once per cycle.
+- Compact plugin 1.4.0 (F43.8): the stale-note warning persists until the current-state sections are rewritten, and the pending reminder is rebuilt from the live size.
+- Autosync no longer overwrites repo files that are newer than the live copy.
 
 ## [1.3.0] - 2026-10-27
 
