@@ -258,15 +258,15 @@ SUMMARY_SYSTEM = ("You write handoff notes for an AI coding agent that will resu
                   "context is compacted. Output only the note.")
 SUMMARY_PROMPT = ("The conversation since the last compaction is on stdin. Write the handoff with exactly these "
                   "headings: ## Goal, ## Parallel work running, ## Decisions and why, ## Done, ## In progress, "
-                  "## Dead ends, ## Exact next step. Under Parallel work running list "
-                  "every builder or helper agent running or queued (name, unit, branch or card, state) and each factory lane (running / ready / blocked on); 'none' is an incident to fix, not a valid steady state. Describe the state at the END of the conversation, including the user's "
+                  "## Dead ends, ## Exact next step. Under Parallel work running list every background agent, subagent, builder "
+                  "or long-running job that is running or queued (name, task, branch or id, state), or \"none\". Describe the state at the END of the conversation, including the user's "
                   "latest request and any rules they set (what needs their approval, what not to touch). "
                   "Under Done list only work confirmed by a tool result; put anything started but unconfirmed "
                   "under In progress prefixed \"unverified:\". "
                   "Keep it under 3500 chars. Use real paths, commands and ids; no secrets.")
 STANDING_HEAD = ("STANDING DECISIONS (do not contradict; if the conversation conflicts, "
                  "say so under Decisions):\n")
-AUTHORITY = ("- authority: the user's latest words > Project decisions > operating-mode memory > Agent handoff > Fresh summary > "
+AUTHORITY = ("- authority: the user's latest words > Project decisions > Agent handoff > Fresh summary > "
              "Claude Code's summary > Facts. If two disagree, the newer statement from the user wins; "
              "if unsure, ask.\n")
 

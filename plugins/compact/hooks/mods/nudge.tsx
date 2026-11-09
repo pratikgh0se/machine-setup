@@ -1,7 +1,7 @@
 // Handoff nudge (spec F33): pure code. Every `$` call lives in register.tsx.
 // The plugin adds one short reminder to a model request that is happening anyway; the model writes its own handoff.
 
-export const HEADINGS = ['## Goal', '## Decisions and why', '## Done', '## In progress', '## Dead ends', '## Exact next step'] as const
+export const HEADINGS = ['## Goal', '## Parallel work running', '## Decisions and why', '## Done', '## In progress', '## Dead ends', '## Exact next step'] as const
 export const MIN_BYTES = 300
 export const NEAR_TOKENS = 50_000
 export const NO_META_MS = 30 * 60_000
@@ -11,7 +11,7 @@ export const STALE_USER_TURNS = 3
 export const STALE_TOOL_CALLS = 40
 export const FRESH_GRACE_MS = 600_000
 /** The two headings whose staleness F35.2 watches (names without `## `), in fixed order. */
-export const STALE_TARGETS = ['In progress', 'Exact next step'] as const
+export const STALE_TARGETS = ['Parallel work running', 'In progress', 'Exact next step'] as const
 
 /** `~/.local/state/claude-handoffs/<sid>-agent.md` meta file written by the plugin (F33.4). Times are epoch ms. */
 export type NudgeMeta = {
@@ -149,12 +149,12 @@ export const agentPathFor = (home: string, sid: string): string => `${handoffsDi
 export const metaPathFor = (home: string, sid: string): string => `${handoffsDir(home)}/${sid}-agent.meta.json`
 
 /** F35.3 text (supersedes F33.3), built at arm time. `verb` is `update` when the file exists, else `write`. */
-export const STALE_SENTENCE = 'Your last handoff is STALE: "In progress" and "Exact next step" are unchanged since the previous nudge; rewrite them from scratch, do not append.'
+export const STALE_SENTENCE = 'Your last handoff is STALE: "Parallel work running", "In progress" and "Exact next step" are unchanged since the previous nudge; rewrite them from scratch, do not append.'
 /** F43.3: standing rules line (D11), right after the headings list. */
 export const STANDING_SENTENCE = " Under ## Decisions and why, list first the user's standing rules and operating mode (e.g. how many agents run in parallel, priorities, who writes tests, how to ask the user), with concrete numbers."
 export function nudgeText(t: number, w: number, path: string, exists: boolean, stale = false, imminent = false): string {
   const pct = Math.floor((t * 100) / w)
-  return `[compact] Context is ${pct}% of the auto-compact window (${kfmt(t)} of ${kfmt(w)}).${imminent ? ' Compaction is imminent.' : ''} Compaction will drop your working memory.${stale ? ` ${STALE_SENTENCE}` : ''} Now, in one Write call, ${exists ? 'update' : 'write'} ${path} (create the folder if missing) with exactly these headings: ${HEADINGS.join(', ')}.${STANDING_SENTENCE} REWRITE "In progress" and "Exact next step" in place for the current state; never append "DONE since" notes. Move finished items to "Done". Keep the whole file under 5000 chars. Use real paths, commands and ids; no secrets. Then continue the task.`
+  return `[compact] Context is ${pct}% of the auto-compact window (${kfmt(t)} of ${kfmt(w)}).${imminent ? ' Compaction is imminent.' : ''} Compaction will drop your working memory.${stale ? ` ${STALE_SENTENCE}` : ''} Now, in one Write call, ${exists ? 'update' : 'write'} ${path} (create the folder if missing) with exactly these headings: ${HEADINGS.join(', ')}.${STANDING_SENTENCE} Under Parallel work running list every background agent, subagent, builder or long-running job that is running or queued (name, task, branch or id, state), or "none". REWRITE "Parallel work running", "In progress" and "Exact next step" in place for the current state; never append "DONE since" notes. Move finished items to "Done". Keep the whole file under 5000 chars. Use real paths, commands and ids; no secrets. Then continue the task.`
 }
 
 /** F33.11 Resume entry for the agent file (<= 240 chars with a normal path). */
