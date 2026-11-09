@@ -149,7 +149,7 @@ export const agentPathFor = (home: string, sid: string): string => `${handoffsDi
 export const metaPathFor = (home: string, sid: string): string => `${handoffsDir(home)}/${sid}-agent.meta.json`
 
 /** F35.3 text (supersedes F33.3), built at arm time. `verb` is `update` when the file exists, else `write`. */
-export const STALE_SENTENCE = 'Your last handoff is STALE: "Parallel work running", "In progress" and "Exact next step" are unchanged since the previous nudge; rewrite them from scratch, do not append.'
+export const STALE_SENTENCE = 'Your last handoff is STALE: Parallel work running, In progress and Exact next step are unchanged; rewrite them.'
 /** F43.3: standing rules line (D11), right after the headings list. */
 export const STANDING_SENTENCE = " Under ## Decisions and why, list first the user's standing rules and operating mode (e.g. how many agents run in parallel, priorities, who writes tests, how to ask the user), with concrete numbers."
 export function nudgeText(t: number, w: number, path: string, exists: boolean, stale = false, imminent = false): string {

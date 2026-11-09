@@ -946,7 +946,9 @@ async function nudgeOnMeasure($: EngineInterface, e: { agentId?: string; context
             const cur = await sectionHashes((await $.fs.read(n.agentPath)) ?? '')
             n.prevSections = n.baseSections
             n.sections = cur
-            stale = isStaleSections(cur, n.baseSections, n.userTurns, n.toolCalls)
+            // F35.2 + C54: a verdict already given stays while at least one target is still unchanged since the last delivery (counters reset at delivery).
+            const keep = (n.staleSections?.length ?? 0) > 0 && n.baseSections !== undefined && !STALE_TARGETS.every(h => cur[h] !== n.baseSections?.[h])
+            stale = keep || isStaleSections(cur, n.baseSections, n.userTurns, n.toolCalls)
             n.staleSections = stale ? [...STALE_TARGETS] : []
           } catch {
             // unreadable: no staleness verdict
@@ -991,7 +993,24 @@ async function nudgeLive($: EngineInterface, ctx: Ctx): Promise<void> {
   try {
     const u = await $.session.usage()
     const t = u.context.tokens
-    if (typeof t === 'number' && Number.isFinite(t) && t > (n.lastT ?? -Infinity)) n.lastT = t
+    if (typeof t === 'number' && Number.isFinite(t) && t > (n.lastT ?? -Infinity)) {
+      n.lastT = t
+      // A pending arm was built from an older, smaller t: rebuild it from the live size (F43.2), keeping the stale verdict.
+      if (n.armText != null && n.window && n.agentPath && t > (n.armTokens ?? -Infinity)) {
+        const stale = n.armStale === true
+        n.armedK = undefined
+        n.armFinal = false
+        n.armText = undefined
+        n.armTokens = undefined
+        const due = dueNudge(t, n.window, ctx.opts.nudgeAtPercent, ctx.opts.nudgeEvery, ctx.opts.nudgeFinalPercent, n.lastK, undefined, n.finalDone, false, compactCeiling(n.window, n.autoCompact))
+        if (due) {
+          n.armText = nudgeText(t, n.window, n.agentPath, n.agentWrittenAt != null || n.agentSize != null, stale, due.final)
+          n.armedK = due.k
+          n.armFinal = due.final
+          n.armTokens = t
+        }
+      }
+    }
   } catch {
     // cached t stays
   }
