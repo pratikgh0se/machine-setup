@@ -545,3 +545,44 @@ Invariant: every active `rule` appears at least as an index line; with ledgers u
 134. Forced exception inside the PreCompact main (e.g. unreadable transcript path that raises): `hooks-error.jsonl` gains one line with `hook` `precompact`, health line `status` `error`, exit 0.
 135. Template: SessionStart compact has `--ledger --part 1`, `2`, `3`; startup and resume have `--ledger --part 1`, `2`, `3`.
 136. `HOOK_VERSION` 1.6.0; all earlier ACs pass except those F42 amends (F39.8 4,000-char cut, F39.10 selection).
+
+## F44 Recall: exact words after compaction (approved in design by the user 2026-11-13, inspired by "LCM: Lossless Context Management", arXiv 2605.04050)
+Why: summaries and the ledger keep decisions, but exact details (commands, numbers, paths, the user's wording) are lost at compaction. Claude Code already keeps every message verbatim in `~/.claude/projects/<slug>/<sid>.jsonl` (LCM's "immutable store"); what is missing is LCM's retrieval side (`lcm_grep`/`lcm_expand`). The user chose: scope = all chats in the same project; form = a local command plus one line in the injected context (no MCP server, ~0 tokens until used); use = rule-based. Not adopted from LCM: replacing Claude Code's context assembly (no hook can), the summary DAG, a database.
+
+**F44.1 Command.** New file `claude/hooks/recall.py` (installed to `~/.claude/hooks/recall.py`, Python 3 stdlib only; uses `rg` when on PATH, else a pure-Python scan with identical output). Read-only except its own cache. Subcommands (all accept `--cwd DIR`, default the process cwd):
+- `search <pattern> [--fixed] [--role user|assistant|tool|any] [--session SID8|all] [--limit N] [--subagents]`: case-insensitive regex (or fixed string with `--fixed`) over message text. Default role `any`, session `all`, limit 20 (max 100). Output one hit per line, newest first: `<sid8>:<line> <YYYY-MM-DD HH:MM> <role>: <snippet>` where snippet is the match with up to 120 chars each side, newlines shown as ` / `. Final line `<k> hits shown of <m> (<s> sessions searched)`.
+- `open <sid8>:<line> [--around K] [--full]`: prints the message at that transcript line plus K (default 2, max 10) messages before and after in the same session, each headed `--- <sid8>:<line> <ts> <role>`; each message body capped at 4,000 chars unless `--full` (cap 40,000) with `[cut: <n> more chars]`.
+- `user [--last N] [--session SID8|all]`: the user's own typed messages verbatim, newest first, default 20 (max 200), same heading form.
+- `handoffs`: list this project's handoff files in `<state>` (`<sid>-latest.md`, `<sid>-agent.md`, timestamped dumps) whose `cwd` line is inside the project root, newest first: `<mtime> <path> <bytes>`.
+Every subcommand caps total stdout at 12,000 chars (then prints `[output cut at 12,000 chars; narrow the search]`). Exit 0 on success including zero hits; exit 2 on bad arguments or unknown id.
+
+**F44.2 Project scope.** Project root = git toplevel of `--cwd` (else `--cwd` itself), same key as F39.1. Sessions in scope: main transcripts `~/.claude/projects/*/<sid>.jsonl` whose first record carrying `cwd` has a realpath equal to or inside the root (a slug-prefix shortcut may pre-select directories but the `cwd` check decides; `machine-setup-private` is NOT inside `machine-setup`). Subagent transcripts (`<sid>/subagents/*.jsonl`, or records with `isSidechain: true`) only with `--subagents`. A cache `<state>/recall-index.json` maps transcript path -> {mtime, size, cwd} so unchanged files are not re-read for scoping.
+
+**F44.3 What counts as a message.** Records with `type` `user` or `assistant`. Role `user` = user records whose content is typed text (string or text blocks), excluding tool results, `isMeta` records, command/caveat wrappers and compaction summaries (`isCompactSummary`); `<system-reminder>…</system-reminder>` blocks and hook-injected `additionalContext` are stripped before matching. Role `assistant` = assistant text blocks (not thinking). Role `tool` = tool_use inputs and tool_result text. A line that fails JSON parsing is skipped silently.
+
+**F44.4 Redaction.** Before printing, replace with `[redacted]`: strings matching `sk-[A-Za-z0-9_-]{16,}`, `ghp_[A-Za-z0-9]{20,}`, `github_pat_[A-Za-z0-9_]{20,}`, `AKIA[0-9A-Z]{16}`, `xox[abp]-[A-Za-z0-9-]{10,}`, and the value after `password=`/`token=`/`secret=` up to whitespace. Matching runs on the unredacted text.
+
+**F44.5 Speed.** On a project with 3.6 GB of transcripts, `search` with a literal word returns in under 10 s on the user's machine with `rg` (prefilter with `rg -n` then parse only matching lines). No index of message text is built.
+
+**F44.6 The rule line (injected).** Both injection points carry one line, identical text:
+`- recall: earlier chats in this project are searchable word for word: python3 ~/.claude/hooks/recall.py search "<regex>" (then: recall.py open <id>; recall.py user --last 20). Use it before acting on anything vague here (exact commands, numbers, paths, names, the user's wording) and whenever the user refers to something said earlier; quote what you find instead of guessing.`
+(a) in the PreCompact handoff, right after the `authority:` line; (b) in ledger part 1 (`--ledger --part 1`), right after the head text. It counts toward the 10,000-char part limit. When `~/.claude/hooks/recall.py` does not exist the line is omitted.
+
+**F44.7 Settings template.** Adds permission allow rule `Bash(python3 ~/.claude/hooks/recall.py:*)` so recall runs without a prompt. Install on the user's machine needs the user's OK (settings change).
+
+**F44.8 Acceptance (ACs 137-150).** Fixtures: a fake `HOME` with `~/.claude/projects/` holding transcripts for root `/r/proj` (2 sessions), `/r/proj/sub` (1 session), `/r/proj-private` (1 session) and one subagent transcript.
+137. `search Pomodoro --cwd /r/proj` finds hits in the 3 in-scope sessions, none from `/r/proj-private`, none from the subagent; `--subagents` adds the subagent hit.
+138. Hit line format and newest-first order exactly as F44.1; final count line present.
+139. `--role user` excludes assistant text, tool results, system-reminder text inside a user record, `isMeta` and compact-summary records.
+140. `open <id> --around 1` prints 3 messages with headings; a 10,000-char message is cut at 4,000 with the cut marker; `--full` prints it whole.
+141. `user --last 2` prints the 2 newest typed user messages verbatim (after stripping reminders).
+142. `handoffs` lists only handoff files whose `cwd` is inside the root.
+143. Redaction: a transcript containing `sk-EXAMPLE-NOT-A-KEY` and `password=hunter2x` prints `[redacted]` for both; searching `hunter2x` still finds the hit (printed redacted).
+144. Output over 12,000 chars is cut with the marker.
+145. Zero hits: exit 0 with `0 hits shown of 0 (<s> sessions searched)`; unknown id for `open`: exit 2.
+146. Same results with `rg` removed from PATH.
+147. A malformed JSON line in a transcript is skipped; other hits still print.
+148. PreCompact handoff contains the F44.6 line right after `authority:` when recall.py exists in the hooks dir, and omits it when it does not.
+149. `--ledger --part 1` contains the F44.6 line after the head; part stays < 10,000 chars with a 180-entry ledger (F42.7 AC 128 still holds).
+150. Template has the allow rule; `HOOK_VERSION` 1.7.0; all earlier ACs pass.
+Port: the same files and line go to `claude-handoff` (installer copies recall.py and adds the allow rule; README section "Recall").
