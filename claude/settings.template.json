@@ -17,7 +17,8 @@
       "Bash(git log:*)",
       "Bash(git status:*)",
       "Bash(git diff:*)",
-      "Bash(git show:*)"
+      "Bash(git show:*)",
+      "Bash(python3 ~/.claude/hooks/recall.py:*)"
     ],
     "deny": [
       "Read(**/node_modules/**)",
