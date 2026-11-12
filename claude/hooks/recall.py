@@ -6,14 +6,23 @@ Subcommands: search, open, user, handoffs. Python 3 stdlib only; uses `rg` as a 
 PATH (same output as the pure-Python scan).
 """
 import argparse
+import array
 import datetime
+import fcntl
 import glob
+import hashlib
 import json
+import math
+import operator
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
+import time
+import urllib.error
+import urllib.request
 
 HOME = os.path.expanduser("~")
 STATE_DIR = (os.environ.get("HANDOFF_STATE_DIR") or "").strip() or os.path.join(HOME, ".local", "state", "claude-handoffs")
@@ -21,6 +30,8 @@ PROJECTS_DIR = os.path.join(HOME, ".claude", "projects")
 INDEX_FILE = os.path.join(STATE_DIR, "recall-index.json")
 
 OUT_CAP = 12000
+CHUNK_MAX, MIN_CHUNK, BATCH, MEANING_TOP = 1500, 20, 32, 50
+QUERY_TIMEOUT, INDEX_TIMEOUT = 5, 60
 CUT_MARK = "[output cut at 12,000 chars; narrow the search]"
 
 REMINDER_RE = re.compile(r"<system-reminder>.*?</system-reminder>", re.S)
@@ -355,15 +366,10 @@ def rg_candidates(files, pattern, fixed):
     return hits
 
 
-def cmd_search(a, root):
-    try:
-        rx = re.compile(re.escape(a.pattern) if a.fixed else a.pattern, re.I)
-    except re.error as e:
-        raise UsageError("bad pattern: %s" % e)
-    limit = max(1, min(a.limit, 100))
-    ts = select_session(in_scope_transcripts(root, a.subagents), a.session)
-    cand = rg_candidates(ts, a.pattern, a.fixed)
-    hits = []  # (ts, path, line, sid8, role, snippet)
+def keyword_hits(a, ts, rx, pattern, fixed):
+    """F44.1 keyword hits, newest first, one per (message line, role). Each: dict."""
+    cand = rg_candidates(ts, pattern, fixed)
+    hits = []
     for t in ts:
         want = None
         if cand is not None:
@@ -379,22 +385,441 @@ def cmd_search(a, root):
                 m = rx.search(text)
                 if not m:
                     continue
-                hits.append((rec.get("timestamp") or "", t.path, n, t.sid8, role,
-                             redacted_snippet(text, m.start(), m.end()), t))
-    # newest first
-    hits.sort(key=lambda h: (h[0], h[1], h[2]), reverse=True)
-    seen, shown = set(), []
-    uniq = []
-    for h in hits:  # one hit per (message line, role)
-        k = (h[1], h[2], h[4])
+                hits.append({"ts": rec.get("timestamp") or "", "path": t.path, "line": n, "sid8": t.sid8,
+                             "sid": t.sid, "role": role, "tag": "word",
+                             "snippet": redacted_snippet(text, m.start(), m.end())})
+    hits.sort(key=lambda h: (h["ts"], h["path"], h["line"]), reverse=True)
+    seen, uniq = set(), []
+    for h in hits:
+        k = (h["path"], h["line"], h["role"])
         if k not in seen:
             seen.add(k)
             uniq.append(h)
-    lines = []
-    for h in uniq[:limit]:
-        lines.append("%s:%d %s %s: %s" % (h[3], h[2], fmt_ts(h[0]), h[4], h[5]))
-    lines.append("%d hits shown of %d (%d sessions searched)" % (min(limit, len(uniq)), len(uniq), len(ts)))
+    return uniq
+
+
+def fmt_hit(h):
+    return "%s:%d %s %s [%s]: %s" % (h["sid8"], h["line"], fmt_ts(h["ts"]), h["role"], h["tag"], h["snippet"])
+
+
+def cmd_search(a, root):
+    limit = max(1, min(a.limit, 100))
+    if a.keyword and a.meaning:
+        raise UsageError("--keyword and --meaning are exclusive")
+    fixed = a.fixed
+    pattern = a.pattern
+    try:
+        rx = re.compile(re.escape(pattern) if fixed else pattern, re.I)
+    except re.error as e:
+        if a.keyword:
+            raise UsageError("bad pattern: %s" % e)
+        fixed = True  # F44.9: not a valid regex -> fixed string for the keyword part
+        rx = re.compile(re.escape(pattern), re.I)
+    ts = select_session(in_scope_transcripts(root, a.subagents), a.session)
+
+    mode_line, mhits, off_reason = None, [], None
+    if a.keyword:
+        off_reason = "--keyword"
+    elif a.role not in ("any", "user", "assistant"):
+        off_reason = "role %s is not indexed" % a.role
+    else:
+        mhits, mode_line, off_reason = meaning_hits(a, root, ts)
+    if off_reason is not None:
+        mode_line = "mode: keyword only (meaning search off: %s)" % off_reason
+
+    if a.meaning and not off_reason:
+        kw = []
+    else:
+        kw = keyword_hits(a, ts, rx, pattern, fixed)
+        if not a.keyword and not off_reason:
+            kw = kw[:200]
+
+    if off_reason is not None:
+        merged = kw
+    else:
+        merged = rrf_merge(kw, mhits)
+    shown = merged[:limit]
+    fill_meaning_snippets(shown, ts)
+    lines = [mode_line]
+    lines += [fmt_hit(h) for h in shown]
+    lines.append("%d hits shown of %d (%d sessions searched)" % (len(shown), len(merged), len(ts)))
     return lines
+
+
+# ---------------------------------------------------------------- meaning search (F44.9)
+
+def embed_cfg():
+    return {
+        "url": (os.environ.get("RECALL_EMBED_URL") or "http://localhost:11434").rstrip("/"),
+        "model": os.environ.get("RECALL_EMBED_MODEL") or "bge-m3",
+        "backend": (os.environ.get("RECALL_EMBED_BACKEND") or "ollama").lower(),
+        "key": os.environ.get("RECALL_EMBED_KEY") or "",
+    }
+
+
+def embed(texts, timeout):
+    """-> list of unit-normalised array('f'). Raises RuntimeError with a short reason."""
+    cfg = embed_cfg()
+    if cfg["backend"] == "openai":
+        url = cfg["url"] + "/v1/embeddings"
+    else:
+        url = cfg["url"] + "/api/embed"
+    headers = {"Content-Type": "application/json"}
+    if cfg["backend"] == "openai" and cfg["key"]:
+        headers["Authorization"] = "Bearer " + cfg["key"]
+    body = json.dumps({"model": cfg["model"], "input": texts}).encode("utf-8")
+    try:
+        req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            d = json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        raise RuntimeError("embedding backend HTTP %s" % e.code)
+    except Exception as e:
+        reason = getattr(e, "reason", None) or e
+        raise RuntimeError("embedding backend unreachable (%s)" % str(reason)[:120])
+    try:
+        if cfg["backend"] == "openai":
+            vecs = [x["embedding"] for x in d["data"]]
+        else:
+            vecs = d["embeddings"]
+        if len(vecs) != len(texts):
+            raise ValueError("count")
+        out = []
+        for v in vecs:
+            arr = array.array("f", v)
+            norm = math.sqrt(sum(x * x for x in arr)) or 1.0
+            out.append(array.array("f", (x / norm for x in arr)))
+        return out
+    except Exception:
+        raise RuntimeError("embedding backend returned an unexpected reply")
+
+
+def project_key(root):
+    base = re.sub(r"[^A-Za-z0-9._-]", "_", os.path.basename(root.rstrip("/")))[:40]
+    return base + "-" + hashlib.sha1(root.encode("utf-8")).hexdigest()[:8]
+
+
+def index_paths(root):
+    d = os.path.join(STATE_DIR, "recall")
+    k = project_key(root)
+    return d, os.path.join(d, k + ".sqlite"), os.path.join(d, k + ".lock")
+
+
+def open_db(path, create):
+    db = sqlite3.connect(path, timeout=30)
+    if create:
+        db.executescript(
+            "CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT);"
+            "CREATE TABLE IF NOT EXISTS files(sid TEXT PRIMARY KEY, path TEXT, off INTEGER, lines INTEGER, msgs INTEGER);"
+            "CREATE TABLE IF NOT EXISTS chunks(sid TEXT, line INTEGER, chunk INTEGER, ts TEXT, role TEXT, vec BLOB,"
+            " PRIMARY KEY(sid, line, chunk));")
+    return db
+
+
+def chunk_text(text, size=CHUNK_MAX):
+    """Split on paragraph, then sentence boundaries, into pieces of at most `size` chars."""
+    text = text.strip()
+    if len(text) <= size:
+        return [text] if text else []
+    pieces = []
+    for para in re.split(r"\n\s*\n", text):
+        para = para.strip()
+        if not para:
+            continue
+        if len(para) <= size:
+            pieces.append(para)
+            continue
+        for sent in re.split(r"(?<=[.!?])\s+", para):
+            while len(sent) > size:
+                pieces.append(sent[:size])
+                sent = sent[size:]
+            if sent.strip():
+                pieces.append(sent.strip())
+    out, cur = [], ""
+    for p in pieces:
+        if cur and len(cur) + 2 + len(p) > size:
+            out.append(cur)
+            cur = p
+        else:
+            cur = (cur + "\n\n" + p) if cur else p
+    if cur:
+        out.append(cur)
+    return out
+
+
+def message_chunks(rec):
+    """-> list of (role, chunk_text) for the indexed units of one record (user/assistant text only)."""
+    out = []
+    for role, text in segments(rec):
+        if role not in ("user", "assistant"):
+            continue
+        for c in chunk_text(redact(text)):
+            if len(c) >= MIN_CHUNK:
+                out.append((role, c))
+    return out
+
+
+def meaning_hits(a, root, ts):
+    """-> (hits, mode_line, off_reason). hits: list of dicts ranked best first (top 50 chunks, one per message)."""
+    cfg = embed_cfg()
+    _d, dbp, _l = index_paths(root)
+    if not os.path.exists(dbp):
+        return [], None, "no meaning index yet (run: recall.py index)"
+    try:
+        db = open_db(dbp, False)
+        meta = dict(db.execute("SELECT k, v FROM meta").fetchall())
+        if meta.get("model") != cfg["model"] or not meta.get("dim"):
+            return [], None, "index was built with model %s, not %s" % (meta.get("model"), cfg["model"])
+        dim = int(meta["dim"])
+        i = db.execute("SELECT COUNT(DISTINCT sid || ':' || line) FROM chunks").fetchone()[0]
+        if not i:
+            return [], None, "meaning index is empty (run: recall.py index)"
+        known, off_sum, size_sum = 0, 0, 0
+        frows = {r[0]: r for r in db.execute("SELECT sid, path, off, lines, msgs FROM files")}
+    except sqlite3.Error as e:
+        return [], None, "meaning index unreadable (%s)" % str(e)[:80]
+    try:
+        q = embed([a.pattern], QUERY_TIMEOUT)[0]
+    except RuntimeError as e:
+        return [], None, str(e)
+    if len(q) != dim:
+        return [], None, "query vector size %d differs from index size %d" % (len(q), dim)
+
+    by_sid = {t.sid: t for t in ts if not t.sub}
+    # coverage: indexed vs known messages, plus an estimate for bytes not yet scanned
+    known = sum(r[4] or 0 for sid, r in frows.items() if sid in by_sid)
+    done_bytes = sum(r[2] or 0 for sid, r in frows.items() if sid in by_sid)
+    todo_bytes = 0
+    for sid, t in by_sid.items():
+        try:
+            size = os.stat(t.path).st_size
+        except OSError:
+            continue
+        todo_bytes += max(0, size - ((frows.get(sid) or (0, 0, 0))[2] or 0))
+    est = int(known * todo_bytes / done_bytes) if done_bytes and todo_bytes else 0
+    n = max(known + est, i)
+
+    sql = "SELECT sid, line, chunk, ts, role, vec FROM chunks"
+    params = []
+    if a.role in ("user", "assistant"):
+        sql += " WHERE role = ?"
+        params.append(a.role)
+    dot = getattr(math, "sumprod", None)
+    scored = []
+    cur = db.execute(sql, params)
+    while True:
+        rows = cur.fetchmany(2000)
+        if not rows:
+            break
+        for sid, line, chunk, ts_, role, blob in rows:
+            if sid not in by_sid:
+                continue
+            v = array.array("f")
+            v.frombytes(blob)
+            if len(v) != dim:
+                continue
+            s = dot(q, v) if dot else sum(map(operator.mul, q, v))
+            scored.append((s, sid, line, chunk, ts_, role))
+    db.close()
+    scored.sort(key=lambda x: x[0], reverse=True)
+    hits, seen = [], set()
+    for s, sid, line, chunk, ts_, role in scored[:MEANING_TOP]:
+        k = (sid, line, role)
+        if k in seen:
+            continue
+        seen.add(k)
+        t = by_sid[sid]
+        hits.append({"ts": ts_ or "", "path": t.path, "line": line, "sid8": t.sid8, "sid": sid, "role": role,
+                     "tag": "meaning", "chunk": chunk, "snippet": None})
+    mode = "mode: hybrid (meaning index covers %d of %d messages)" % (i, n)
+    return hits, mode, None
+
+
+def rrf_merge(kw, mh, k=60):
+    """Reciprocal-rank fusion, equal weights; a message found both ways counts once ([both])."""
+    scores, items = {}, {}
+    for rank, h in enumerate(kw):
+        key = (h["path"], h["line"], h["role"])
+        scores[key] = scores.get(key, 0.0) + 1.0 / (k + rank + 1)
+        items[key] = dict(h)
+    for rank, h in enumerate(mh):
+        key = (h["path"], h["line"], h["role"])
+        scores[key] = scores.get(key, 0.0) + 1.0 / (k + rank + 1)
+        if key in items:
+            items[key]["tag"] = "both"
+        else:
+            items[key] = dict(h)
+    order = sorted(items, key=lambda x: (scores[x], items[x]["ts"], x[0], x[1]), reverse=True)
+    return [items[x] for x in order]
+
+
+def fill_meaning_snippets(shown, ts):
+    """Meaning-only hits carry no text yet: re-read the transcript line and take the matched chunk."""
+    need = {}
+    for h in shown:
+        if h.get("snippet") is None:
+            need.setdefault(h["path"], {})[h["line"]] = h
+    for t in ts:
+        m = need.get(t.path)
+        if not m:
+            continue
+        for n, rec in t.records(set(m)):
+            h = m[n]
+            chunks = [c for r, c in message_chunks(rec) if r == h["role"]]
+            c = chunks[h["chunk"]] if h.get("chunk", 0) < len(chunks) else (chunks[0] if chunks else "")
+            h["snippet"] = re.sub(r"\r?\n", " / ", c[:240])
+    for h in shown:
+        if h.get("snippet") is None:
+            h["snippet"] = "(message no longer readable)"
+
+
+# ---------------------------------------------------------------- index (F44.9)
+
+def cmd_index(a, root):
+    t0 = time.time()
+    deadline = t0 + a.max_seconds if a.max_seconds else None
+    d, dbp, lockp = index_paths(root)
+    os.makedirs(d, exist_ok=True)
+    lockf = open(lockp, "a+")
+    try:
+        fcntl.flock(lockf, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return ["index busy"]
+    cfg = embed_cfg()
+    db = open_db(dbp, True)
+    meta = dict(db.execute("SELECT k, v FROM meta").fetchall())
+    if meta.get("model") != cfg["model"] and meta:
+        db.executescript("DELETE FROM chunks; DELETE FROM files; DELETE FROM meta;")
+        db.commit()
+        meta = {}
+    dim = int(meta["dim"]) if meta.get("dim") else None
+    ts = [t for t in in_scope_transcripts(root, False) if not t.sub]
+    ts.sort(key=lambda t: t.mtime, reverse=True)
+    frows = {r[0]: r for r in db.execute("SELECT sid, path, off, lines, msgs FROM files")}
+    total, skipped = 0, None
+    avg_bytes = 4000.0
+    stopped = False
+    remaining = 0
+
+    def rest_estimate(from_idx):
+        b = 0
+        for t in ts[from_idx:]:
+            try:
+                size = os.stat(t.path).st_size
+            except OSError:
+                continue
+            b += max(0, size - ((frows.get(t.sid) or (0, 0, 0))[2] or 0))
+        return int(b / avg_bytes)
+
+    for ti, t in enumerate(ts):
+        try:
+            size = os.stat(t.path).st_size
+        except OSError:
+            continue
+        row = frows.get(t.sid)
+        off, lines, msgs = (row[2] or 0, row[3] or 0, row[4] or 0) if row else (0, 0, 0)
+        if size < off:  # truncated or replaced: start over for this transcript
+            db.execute("DELETE FROM chunks WHERE sid = ?", (t.sid,))
+            off, lines, msgs = 0, 0, 0
+        if size == off:
+            continue
+        # scan new complete lines into items
+        items = []  # (line, ts, role, chunk_i, text, end_off)
+        pos, n = off, lines
+        with open(t.path, "rb") as f:
+            f.seek(off)
+            for raw in f:
+                end = pos + len(raw)
+                n += 1
+                if not raw.endswith(b"\n"):
+                    rec = parse_line(raw.decode("utf-8", "replace"))
+                    if rec is None:  # incomplete last line: leave for the next run
+                        n -= 1
+                        break
+                pos = end
+                if (b'"user"' not in raw and b'"assistant"' not in raw):
+                    continue
+                rec = parse_line(raw.decode("utf-8", "replace"))
+                if not rec or rec.get("isSidechain"):
+                    continue
+                cs = message_chunks(rec)
+                if not cs:
+                    continue
+                msgs_seen = {}
+                for role, c in cs:
+                    ci = msgs_seen.get(role, 0)
+                    msgs_seen[role] = ci + 1
+                    items.append((n, rec.get("timestamp") or "", role, len(items), c, pos))
+        new_end_line, new_end_pos = n, pos
+        # chunk index must be per (line, role)
+        per, fixed_items = {}, []
+        for (ln, tsx, role, _gi, c, endp) in items:
+            ci = per.get((ln, role), 0)
+            per[(ln, role)] = ci + 1
+            fixed_items.append((ln, tsx, role, ci, c, endp))
+        items = fixed_items
+        new_msgs = len({(it[0], it[2]) for it in items})
+        if not items:
+            db.execute("INSERT OR REPLACE INTO files VALUES (?,?,?,?,?)", (t.sid, t.path, new_end_pos, new_end_line, msgs))
+            db.commit()
+            frows[t.sid] = (t.sid, t.path, new_end_pos, new_end_line, msgs)
+            continue
+        pending = len(items)
+        i = 0
+        while i < len(items):
+            if deadline and time.time() >= deadline:
+                stopped = True
+                break
+            batch = items[i:i + BATCH]
+            try:
+                vecs = embed([b[4] for b in batch], INDEX_TIMEOUT)
+            except RuntimeError as e:
+                skipped = str(e)
+                break
+            if dim is None:
+                dim = len(vecs[0])
+                db.execute("INSERT OR REPLACE INTO meta VALUES ('model', ?)", (cfg["model"],))
+                db.execute("INSERT OR REPLACE INTO meta VALUES ('dim', ?)", (str(dim),))
+            elif len(vecs[0]) != dim:  # model dimension changed: rebuild
+                db.executescript("DELETE FROM chunks; DELETE FROM files; DELETE FROM meta;")
+                db.execute("INSERT OR REPLACE INTO meta VALUES ('model', ?)", (cfg["model"],))
+                dim = len(vecs[0])
+                db.execute("INSERT OR REPLACE INTO meta VALUES ('dim', ?)", (str(dim),))
+                frows.clear()
+                skipped = "embedding size changed; index reset, run again"
+                break
+            db.executemany("INSERT OR REPLACE INTO chunks VALUES (?,?,?,?,?,?)",
+                           [(t.sid, b[0], b[3], b[1], b[2], v.tobytes()) for b, v in zip(batch, vecs)])
+            i += len(batch)
+            total += len(batch)
+            # advance the offset to the end of the last line whose chunks are all stored
+            done_line = items[i - 1][0] if i >= len(items) or items[i][0] != items[i - 1][0] else None
+            if i >= len(items):
+                row_off, row_lines = new_end_pos, new_end_line
+            elif done_line is not None:
+                row_off, row_lines = items[i - 1][5], done_line
+            else:
+                row_off, row_lines = None, None
+            if row_off is not None:
+                share = new_msgs * i // len(items) if i < len(items) else new_msgs
+                db.execute("INSERT OR REPLACE INTO files VALUES (?,?,?,?,?)",
+                           (t.sid, t.path, row_off, row_lines, msgs + share))
+                frows[t.sid] = (t.sid, t.path, row_off, row_lines, msgs + share)
+            db.commit()
+            if (total // BATCH) % 10 == 0 and i < len(items):
+                print("indexed %d chunks, %d remaining" % (total, pending - i + rest_estimate(ti + 1)), flush=True)
+        if skipped or stopped:
+            remaining = pending - i + rest_estimate(ti + 1)
+            break
+        avg_bytes = max(500.0, (size - off) / max(1, pending))
+    db.commit()
+    db.close()
+    out = []
+    if skipped:
+        out.append("meaning index skipped: %s" % skipped)
+    out.append("indexed %d chunks, %d remaining" % (total, remaining))
+    out.append("%.1f chunks/s over %.1f s" % (total / max(0.001, time.time() - t0), time.time() - t0)) if total else None
+    return [x for x in out if x]
 
 
 # ---------------------------------------------------------------- open / user
@@ -539,6 +964,8 @@ def build_parser():
     p.add_argument("--session", default="all")
     p.add_argument("--limit", type=int, default=20)
     p.add_argument("--subagents", action="store_true")
+    p.add_argument("--keyword", action="store_true")
+    p.add_argument("--meaning", action="store_true")
     common(p)
     p = sub.add_parser("open")
     p.add_argument("id")
@@ -548,6 +975,9 @@ def build_parser():
     p = sub.add_parser("user")
     p.add_argument("--last", type=int, default=20)
     p.add_argument("--session", default="all")
+    common(p)
+    p = sub.add_parser("index")
+    p.add_argument("--max-seconds", type=float, default=0)
     common(p)
     p = sub.add_parser("handoffs")
     common(p)
@@ -566,7 +996,7 @@ def main(argv):
         a = build_parser().parse_args(argv)
         cwd = os.path.expanduser(a.cwd) if a.cwd else os.getcwd()
         root = project_root(cwd)
-        fn = {"search": cmd_search, "open": cmd_open, "user": cmd_user, "handoffs": cmd_handoffs}[a.cmd]
+        fn = {"search": cmd_search, "open": cmd_open, "user": cmd_user, "index": cmd_index, "handoffs": cmd_handoffs}[a.cmd]
         emit(fn(a, root))
         return 0
     except UsageError as e:
