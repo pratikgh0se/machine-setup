@@ -69,7 +69,7 @@ HARD_MAX = 9900    # each part's total output (warning + header + content + cont
 INLINE_MAX = 9700  # content target per part
 NAMES_MAX = 150    # the section-name list in a continuation line is cut to this many chars
 MAX_PARTS = 3      # F37.6
-HOOK_VERSION = "1.6.0"
+HOOK_VERSION = "1.7.0"
 _SID = ["unknown"]
 
 
@@ -168,9 +168,25 @@ def emit(ctx):
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": ctx}}))
 
 
+RECALL_LINE = ("- recall: earlier chats in this project are searchable word for word: python3 ~/.claude/hooks/recall.py "
+               "search \"<words or regex>\" (then: recall.py open <id>; recall.py user --last 20). Use it before acting on "
+               "anything vague here (exact commands, numbers, paths, names, the user's wording) and whenever the user "
+               "refers to something said earlier; quote what you find instead of guessing.\n")
+
+
+def recall_line():
+    """F44.11(a): the F44.6 line, only when recall.py exists in ~/.claude/hooks (HOME from the environment) or next to this hook."""
+    for p in (os.path.join(os.path.expanduser("~"), ".claude", "hooks", "recall.py"),
+              os.path.join(os.path.dirname(os.path.abspath(__file__)), "recall.py")):
+        if os.path.isfile(p):
+            return RECALL_LINE
+    return ""
+
+
 def ledger_part_head(k, path):
     return (f"Project decisions for this repo (part {k} of the ledger; standing rules first, then decisions, then "
-            f"tasks, newest first within each; full ledger: {path}). Standing unless the user says otherwise:\n")
+            f"tasks, newest first within each; full ledger: {path}). Standing unless the user says otherwise:\n"
+            + (recall_line() if k == 1 else ""))
 
 
 def index_note(path):
@@ -178,13 +194,14 @@ def index_note(path):
 
 
 ACT_LINE_RE = re.compile(r"^- D(\d+) \[\d{4}-\d{2}-\d{2}\] (.+) \| why: .+$")
+LOOSE_ACT_RE = re.compile(r"^- D(\d+) \[\d{4}-\d{2}-\d{2}\] (.+)$")  # F44.11(e): active-looking line, `| why:` optional
 KIND_ORDER = {"rule": 0, "decision": 1, "task": 2}
 
 
 def parse_ledger_file(path):
     """F42.1: active entries as dicts (id, kind rule|decision|task, line, text), in priority order: rules, then
     decisions (untagged count as decision), then tasks, each newest id first. SUPERSEDED and RESOLVED lines are skipped."""
-    act, other = {}, set()
+    act, other, nowhy = {}, set(), []
     with open(path, encoding="utf-8", errors="replace") as f:
         for ln in f.read().splitlines():
             ln = ln.strip()
@@ -193,11 +210,21 @@ def parse_ledger_file(path):
                 other.add(int(m.group(1)))
                 continue
             m = ACT_LINE_RE.match(ln)
+            if not m:  # F44.11(e): inject an active line that lacks `| why:`; log its id
+                lm = LOOSE_ACT_RE.match(ln)
+                if lm and int(lm.group(1)) >= 1 and not re.match(r"^(SUPERSEDED by |RESOLVED \[)", lm.group(2)):
+                    m = lm
+                    if int(lm.group(1)) not in act and int(lm.group(1)) not in other:
+                        nowhy.append(int(lm.group(1)))
             if m and int(m.group(1)) >= 1 and int(m.group(1)) not in act and int(m.group(1)) not in other:
                 text = m.group(2)
                 tm = re.match(r"^\[(rule|decision|task)\] (.*)$", text)
                 act[int(m.group(1))] = {"id": int(m.group(1)), "kind": tm.group(1) if tm else "decision",
                                         "line": ln, "text": tm.group(2) if tm else text}
+    if nowhy and PART == 1:  # one log line per entry, from the part-1 call only (parts 2-3 re-read the same file)
+        for i in nowhy:
+            if i in act:
+                log_error(ValueError(f"active entry D{i} has no '| why:' (injected anyway)"))
     ents = sorted(act.values(), key=lambda e: (KIND_ORDER[e["kind"]], -e["id"]))
     return [e for e in ents if e["id"] not in other]
 

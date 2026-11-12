@@ -10,7 +10,7 @@ if os.environ.get("HANDOFF_HOOK_CHILD"):  # spawned by our own summary call: nev
     sys.exit(0)
 
 _T0 = time.monotonic()
-HOOK_VERSION = "1.6.0"
+HOOK_VERSION = "1.7.0"
 HOME = os.path.expanduser("~")
 HANDOFFS_DIR = (os.environ.get("HANDOFF_STATE_DIR") or "").strip() or os.path.join(HOME, ".local", "state", "claude-handoffs")
 HEALTH_FILE = os.path.join(HANDOFFS_DIR, "health.jsonl")
@@ -269,6 +269,23 @@ STANDING_HEAD = ("STANDING DECISIONS (do not contradict; if the conversation con
 AUTHORITY = ("- authority: the user's latest words > Project decisions > Agent handoff > Fresh summary > "
              "Claude Code's summary > Facts. If two disagree, the newer statement from the user wins; "
              "if unsure, ask.\n")
+RECALL_LINE = ("- recall: earlier chats in this project are searchable word for word: python3 ~/.claude/hooks/recall.py "
+               "search \"<words or regex>\" (then: recall.py open <id>; recall.py user --last 20). Use it before acting on "
+               "anything vague here (exact commands, numbers, paths, names, the user's wording) and whenever the user "
+               "refers to something said earlier; quote what you find instead of guessing.\n")
+
+
+def recall_path():
+    """F44.11(a): ~/.claude/hooks/recall.py (HOME from the environment) or recall.py next to this hook; None if neither."""
+    for p in (os.path.join(os.path.expanduser("~"), ".claude", "hooks", "recall.py"),
+              os.path.join(os.path.dirname(os.path.abspath(__file__)), "recall.py")):
+        if os.path.isfile(p):
+            return p
+    return None
+
+
+def recall_line():
+    return RECALL_LINE if recall_path() else ""
 
 
 def summary_enabled():
@@ -595,7 +612,7 @@ def ledger_dir(root):
     return os.path.abspath(os.path.join(HANDOFFS_DIR, "projects", project_key(root)))
 
 
-def parse_entry(line):
+def parse_entry(line, cap=True):
     """One ledger line -> dict(id, kind, line, by, tag) or None. kind is act|sup|res; tag (F42.1) is
     rule|decision|task|None for an active entry. Over-long lines are cut with `...` (F39.2)."""
     line = (line or "").rstrip("\r\n").strip()
@@ -603,8 +620,7 @@ def parse_entry(line):
     if m:
         pre = f"- D{m.group(1)} [{m.group(2)}] RESOLVED [{m.group(3)}]: {m.group(4)} | was: "
         was = m.group(5)
-        if len(pre) + len(was) > LEDGER_LINE_MAX:
-            was = was[: max(LEDGER_LINE_MAX - len(pre) - 3, 0)] + "..."
+        # F44.11(c): RESOLVED lines are exempt from LEDGER_LINE_MAX (never injected); `was:` is kept whole
         return None if int(m.group(1)) < 1 else {"id": int(m.group(1)), "kind": "res", "line": pre + was, "by": None, "tag": None}
     m = SUP_RE.match(line)
     if m:
@@ -621,7 +637,7 @@ def parse_entry(line):
     if int(m.group(1)) < 1:
         return None
     full = pre + dec + sep + why
-    if len(full) > LEDGER_LINE_MAX:
+    if cap and len(full) > LEDGER_LINE_MAX and kind == "act":  # F44.11(c): SUPERSEDED lines are exempt from the cap
         # F39.11: parsed first; cut the why/because text (ending ...), then the decision text; never dropped
         over = len(full) - LEDGER_LINE_MAX
         keep = max(len(why) - over - 3, 0)
@@ -639,7 +655,7 @@ def parse_entry(line):
 def parse_ledger(text):
     out = {}
     for ln in (text or "").splitlines():
-        e = parse_entry(ln)
+        e = parse_entry(ln, cap=False)  # F44.11(c): the cap applies to new model lines only, never to stored entries
         if e and e["id"] not in out:
             out[e["id"]] = e
     return out
@@ -970,6 +986,92 @@ def ledger_maintain(dirarg):
             pass
 
 
+def ledger_repair(dirarg):
+    """F44.11(d): `--ledger-repair <dir>`: restore RESOLVED/SUPERSEDED lines whose `was:` (or superseded decision)
+    text was cut to end in `...`, from the newest timestamped backup decisions.<ts>.md that holds the entry as an
+    active line. Takes the ledger lock, writes a backup first (only when something is repaired), prints
+    `repaired <n> of <m> cut lines`. <dir> not a directory -> stderr + exit 2; no ledger -> `no ledger for <dir>`."""
+    if not os.path.isdir(dirarg):
+        print(f"ledger-repair: no such directory: {dirarg}", file=sys.stderr)
+        sys.exit(2)
+    root = project_root(os.path.abspath(dirarg))
+    ddir = ledger_dir(root)
+    lpath = os.path.join(ddir, "decisions.md")
+    if not os.path.exists(lpath):
+        print(f"no ledger for {dirarg}")
+        return
+    if not ledger_enabled():
+        return
+    if fcntl is None:
+        print("repair failed: NoFcntl")
+        return
+    lock = None
+    try:
+        lock = open(os.path.join(ddir, "decisions.lock"), "a+")
+        t0 = time.monotonic()
+        while True:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                if time.monotonic() - t0 >= LOCK_WAIT_S:
+                    print("repair failed: locked")
+                    return
+                time.sleep(0.1)
+        text = read_text(lpath)
+        backups = sorted(glob.glob(os.path.join(ddir, "decisions.[0-9]*T*Z.md")), reverse=True)
+        cache = {}
+
+        def original(i, cut_prefix):
+            """Full `[tag] text | why: reason` of active entry i from the newest backup that has it (and agrees with the cut text)."""
+            for b in backups:
+                if b not in cache:
+                    d = {}
+                    for ln in read_text(b).splitlines():
+                        m = ACT_RE.match(ln.strip())
+                        if m and int(m.group(1)) not in d:
+                            d[int(m.group(1))] = (m.group(3), m.group(4))
+                    cache[b] = d
+                if i in cache[b]:
+                    dec, why = cache[b][i]
+                    if (dec + " | why: " + why).startswith(cut_prefix):
+                        return dec, why
+            return None
+
+        lines = text.split("\n")
+        total = fixed = 0
+        for n, raw in enumerate(lines):
+            ln = raw.rstrip("\r").strip()
+            m = RES_RE.match(ln)
+            if m and m.group(5).endswith("..."):
+                total += 1
+                o = original(int(m.group(1)), m.group(5)[:-3])
+                if o:
+                    lines[n] = f"- D{m.group(1)} [{m.group(2)}] RESOLVED [{m.group(3)}]: {m.group(4)} | was: {o[0]} | why: {o[1]}"
+                    fixed += 1
+                continue
+            m = SUP_RE.match(ln)
+            if m and m.group(5).endswith("..."):
+                total += 1
+                o = original(int(m.group(1)), m.group(5)[:-3])
+                if o:
+                    lines[n] = (f"- D{m.group(1)} [{m.group(2)}] SUPERSEDED by D{m.group(3)} [{m.group(4)}]: "
+                                f"{o[0]} | because: {m.group(6)}")
+                    fixed += 1
+        if fixed:
+            ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            write_atomic(os.path.join(ddir, f"decisions.{ts}.md"), text)  # F39.6 backup first
+            prune_backups(ddir)
+            write_atomic(lpath, "\n".join(lines))
+        print(f"repaired {fixed} of {total} cut lines")
+    finally:
+        try:
+            if lock is not None:
+                lock.close()
+        except Exception:
+            pass
+
+
 AGENT_HEAD = "## Agent handoff (written by the working agent)\n"
 SUMMARY_HEAD_FMT = "## Fresh summary at compaction ({}; verify against facts)\n"
 
@@ -1050,7 +1152,7 @@ def build(d, info):
     tp = d.get("transcript_path", "")
     now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
     header = (f"# Handoff (pre-compaction)\n- session: {sid}\n- cwd: {cwd}\n- trigger: {d.get('trigger')}\n"
-              f"- time: {now}\n- transcript: {tp}\n{AUTHORITY}")
+              f"- time: {now}\n- transcript: {tp}\n{AUTHORITY}{recall_line()}")
     footer = f"\nFull transcript: {tp}. Read it for exact details before guessing.\n"
     P = parse(tp)
     if "toplevel" in FAULTS:
@@ -1274,6 +1376,28 @@ def is_subagent(d):
     return (isinstance(aid, str) and bool(aid.strip())) or (isinstance(tp, str) and "/subagents/" in tp)
 
 
+def start_indexer(d, sid):
+    """F44.9/F44.11(b): start `recall.py index --cwd <cwd> --max-seconds 600` fully detached after the handoff is
+    written. Never waited on; any error goes to hooks-error.jsonl."""
+    try:
+        rp = recall_path()
+        cwd = d.get("cwd")
+        if not rp or not isinstance(cwd, str) or not cwd.strip():
+            return
+        rdir = os.path.join(HANDOFFS_DIR, "recall")
+        os.makedirs(rdir, exist_ok=True)
+        log = open(os.path.join(rdir, "index.log"), "ab")
+        try:
+            subprocess.Popen([sys.executable, rp, "index", "--cwd", cwd, "--max-seconds", "600"],
+                             stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+                             start_new_session=True, close_fds=True)
+        finally:
+            log.close()
+    except BaseException as e:
+        if not isinstance(e, KeyboardInterrupt):
+            log_error(sid, e)
+
+
 def main():
     try:
         d = json.load(sys.stdin)
@@ -1321,6 +1445,8 @@ def main():
             write_health(d, sid, info, body)
         except BaseException:
             pass
+    if body:
+        start_indexer(d, sid)
     try:
         cutoff = time.time() - 14 * 86400
         for pat in ("*.md", "*-degraded.json", "*-last-health.json"):
@@ -1388,6 +1514,10 @@ try:
         _a = sys.argv[1:]
         _i = _a.index("--ledger-maintain")
         ledger_maintain(_a[_i + 1] if _i + 1 < len(_a) else os.getcwd())
+    elif "--ledger-repair" in sys.argv[1:]:
+        _a = sys.argv[1:]
+        _i = _a.index("--ledger-repair")
+        ledger_repair(_a[_i + 1] if _i + 1 < len(_a) else os.getcwd())
     else:
         main()
 except BaseException as _e:
