@@ -10,7 +10,7 @@ if os.environ.get("HANDOFF_HOOK_CHILD"):  # spawned by our own summary call: nev
     sys.exit(0)
 
 _T0 = time.monotonic()
-HOOK_VERSION = "1.7.0"
+HOOK_VERSION = "1.7.1"
 HOME = os.path.expanduser("~")
 HANDOFFS_DIR = (os.environ.get("HANDOFF_STATE_DIR") or "").strip() or os.path.join(HOME, ".local", "state", "claude-handoffs")
 HEALTH_FILE = os.path.join(HANDOFFS_DIR, "health.jsonl")
@@ -272,7 +272,9 @@ AUTHORITY = ("- authority: the user's latest words > Project decisions > Agent h
 RECALL_LINE = ("- recall: earlier chats in this project are searchable word for word: python3 ~/.claude/hooks/recall.py "
                "search \"<words or regex>\" (then: recall.py open <id>; recall.py user --last 20). Use it before acting on "
                "anything vague here (exact commands, numbers, paths, names, the user's wording) and whenever the user "
-               "refers to something said earlier; quote what you find instead of guessing.\n")
+               "refers to something said earlier; quote what you find instead of guessing. "
+               "If recall and the decisions list disagree, the decisions list and the user's latest words win: "
+               "recall shows history, not current rules.\n")
 
 
 def recall_path():

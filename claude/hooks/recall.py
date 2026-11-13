@@ -31,8 +31,10 @@ INDEX_FILE = os.path.join(STATE_DIR, "recall-index.json")
 
 OUT_CAP = 12000
 CHUNK_MAX, MIN_CHUNK, BATCH, MEANING_TOP = 1500, 20, 32, 50
-QUERY_TIMEOUT, INDEX_TIMEOUT = 5, 60
+QUERY_TIMEOUT, INDEX_TIMEOUT = 30, 60  # F44.12(b): cold model load needs > 5 s
 CUT_MARK = "[output cut at 12,000 chars; narrow the search]"
+OPEN_FULL_CAP = 45000  # F44.12(a): total stdout cap for `open --full`
+MSG_CAP_FULL = 40000
 
 REMINDER_RE = re.compile(r"<system-reminder>.*?</system-reminder>", re.S)
 WRAPPER_PREFIXES = ("<task-notification", "[SYSTEM NOTIFICATION", "<command-name", "<local-command",
@@ -467,7 +469,10 @@ def embed(texts, timeout):
     headers = {"Content-Type": "application/json"}
     if cfg["backend"] == "openai" and cfg["key"]:
         headers["Authorization"] = "Bearer " + cfg["key"]
-    body = json.dumps({"model": cfg["model"], "input": texts}).encode("utf-8")
+    payload = {"model": cfg["model"], "input": texts}
+    if cfg["backend"] != "openai":
+        payload["keep_alive"] = "30m"  # F44.12(b): keep the model loaded between calls
+    body = json.dumps(payload).encode("utf-8")
     try:
         req = urllib.request.Request(url, data=body, headers=headers, method="POST")
         with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -824,11 +829,15 @@ def cmd_index(a, root):
 
 # ---------------------------------------------------------------- open / user
 
-def cap_body(text, full):
-    cap = 40000 if full else 4000
-    if len(text) <= cap:
-        return text
-    return text[:cap] + "\n[cut: %d more chars]" % (len(text) - cap)
+def cap_body(text, full, mid=None, start=0):
+    """Body text capped at 4,000 chars (40,000 with full), starting at char `start`. A cut body ends with a marker
+    naming the next offset (F44.12(a))."""
+    cap = MSG_CAP_FULL if full else 4000
+    seg = text[start:start + cap]
+    end = start + len(seg)
+    if end >= len(text):
+        return seg
+    return seg + "\n[cut: %d more chars; continue with: recall.py open %s --full --from %d]" % (len(text) - end, mid or "<id>", end)
 
 
 def rec_message(rec):
@@ -871,9 +880,19 @@ def cmd_open(a, root):
     if pos is None:
         raise UsageError("no message at %s:%d" % (sid, line))
     out = []
+    if a.from_ is not None:
+        if a.from_ < 0:
+            raise UsageError("--from must be >= 0")
+        n, rec, role, text = msgs[pos]
+        text = redact(text)
+        mid = "%s:%d" % (t.sid8, n)
+        seg_end = min(len(text), a.from_ + MSG_CAP_FULL)
+        out.append("%s [chars %d-%d of %d]" % (heading(t, n, rec, role), min(a.from_, len(text)), seg_end, len(text)))
+        out.append(cap_body(text, True, mid, a.from_))
+        return out
     for n, rec, role, text in msgs[max(0, pos - around):pos + around + 1]:
         out.append(heading(t, n, rec, role))
-        out.append(cap_body(redact(text), a.full))
+        out.append(cap_body(redact(text), a.full, "%s:%d" % (t.sid8, n)))
     return out
 
 
@@ -971,6 +990,7 @@ def build_parser():
     p.add_argument("id")
     p.add_argument("--around", type=int, default=2)
     p.add_argument("--full", action="store_true")
+    p.add_argument("--from", dest="from_", type=int, default=None)
     common(p)
     p = sub.add_parser("user")
     p.add_argument("--last", type=int, default=20)
@@ -984,10 +1004,10 @@ def build_parser():
     return ap
 
 
-def emit(lines):
+def emit(lines, cap=OUT_CAP):
     text = "\n".join(lines)
-    if len(text) > OUT_CAP:
-        text = text[:OUT_CAP] + "\n" + CUT_MARK
+    if len(text) > cap:
+        text = text[:cap] + "\n" + CUT_MARK.replace("12,000", "{:,}".format(cap))
     sys.stdout.write(text + ("\n" if text else ""))
 
 
@@ -997,7 +1017,8 @@ def main(argv):
         cwd = os.path.expanduser(a.cwd) if a.cwd else os.getcwd()
         root = project_root(cwd)
         fn = {"search": cmd_search, "open": cmd_open, "user": cmd_user, "index": cmd_index, "handoffs": cmd_handoffs}[a.cmd]
-        emit(fn(a, root))
+        big = a.cmd == "open" and (a.full or a.from_ is not None)
+        emit(fn(a, root), OPEN_FULL_CAP if big else OUT_CAP)
         return 0
     except UsageError as e:
         sys.stderr.write("recall.py: %s\n" % e)
