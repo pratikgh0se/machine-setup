@@ -2,6 +2,21 @@
 
 All notable changes are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.5.0] - 2026-11-14
+
+### Added
+
+- Handoff hooks 1.7.0 (F44): `recall.py`, based on the LCM paper (Ehrlich and Blackman, "LCM: Lossless Context Management", arXiv:2605.04050). It searches every earlier chat in the same project word for word and by meaning (hybrid: keyword plus a local `bge-m3` embedding index via Ollama, keyword-only when Ollama is off). Subcommands: `search`, `open`, `user`, `handoffs`, `index`. Secrets are redacted before printing and before embedding.
+- One recall line in every handoff and in ledger part 1, telling Claude to look up exact commands, numbers and the user's wording instead of guessing. The settings template allows `python3 ~/.claude/hooks/recall.py` without a prompt.
+- PreCompact starts a detached meaning-index update after writing the handoff.
+- `--ledger-repair <repo>` restores finished-item text that older versions cut short.
+
+### Fixed
+
+- RESOLVED and SUPERSEDED lines keep their full original text (they were cut at 700 chars, dropping `| why:`).
+- Active ledger lines without `| why:` are injected instead of silently skipped, and logged to `hooks-error.jsonl`.
+- `--ledger-maintain` rejects a missing folder (exit 2) and creates nothing when a project has no ledger.
+
 ## [1.4.0] - 2026-11-09
 
 ### Added
