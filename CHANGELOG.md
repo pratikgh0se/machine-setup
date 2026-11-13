@@ -2,6 +2,12 @@
 
 All notable changes are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.5.1] - 2026-11-14
+
+### Fixed
+
+- Handoff hooks 1.7.1 (F44.12): `recall.py open --full` prints messages up to 40,000 chars and `--from <N>` pages through longer ones (a 14,300-char message was cut at the old 12,000-char output cap). Meaning search waits up to 30 s for a cold embedding model and keeps it loaded (`keep_alive`). The recall line says the decisions list and the user's latest words win over recall when they disagree.
+
 ## [1.5.0] - 2026-11-14
 
 ### Added
