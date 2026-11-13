@@ -827,6 +827,119 @@ def cmd_index(a, root):
     return [x for x in out if x]
 
 
+# ---------------------------------------------------------------- index --all / session-end (F44.13)
+
+def git_toplevel(path):
+    """Git toplevel of path, or None when path is not inside a git repo."""
+    try:
+        r = subprocess.run(["git", "-C", path, "rev-parse", "--show-toplevel"],
+                           capture_output=True, text=True, timeout=5)
+        out = (r.stdout or "").strip()
+        if r.returncode == 0 and out:
+            return out
+    except Exception:
+        pass
+    return None
+
+
+def discover_projects():
+    """[(toplevel, newest_mtime)] for every Claude Code project folder whose cwd still exists and is in a git repo,
+    deduplicated, newest activity first."""
+    found = {}
+    for pd in glob.glob(os.path.join(PROJECTS_DIR, "*")):
+        files = []
+        for f in glob.glob(os.path.join(pd, "*.jsonl")):
+            try:
+                files.append((os.stat(f).st_mtime, f))
+            except OSError:
+                pass
+        if not files:
+            continue
+        mt, newest = max(files)
+        cwd = None
+        try:
+            with open(newest, "rb") as fh:
+                for raw in fh:
+                    rec = parse_line(raw.decode("utf-8", "replace"))
+                    if isinstance(rec, dict) and isinstance(rec.get("cwd"), str) and rec["cwd"].strip():
+                        cwd = rec["cwd"]
+                        break
+        except OSError:
+            continue
+        if not cwd or not os.path.isdir(cwd):
+            continue
+        top = git_toplevel(cwd)
+        if not top:
+            continue
+        found[top] = max(found.get(top, 0), mt)
+    return sorted(found.items(), key=lambda kv: kv[1], reverse=True)
+
+
+def cmd_index_all(a):
+    t0 = time.time()
+    cap = a.max_seconds if a.max_seconds else 3000
+    projects = discover_projects()
+    n, k = len(projects), 0
+    out, skipped = [], None
+    for top, _mt in projects:
+        left = cap - (time.time() - t0)
+        if left <= 0:
+            out.append("stopped: time cap, %d of %d projects done" % (k, n))
+            break
+        sub = argparse.Namespace(max_seconds=left, cwd=top, cmd="index", all=False)
+        try:
+            lines = cmd_index(sub, top)
+        except Exception as e:
+            out.append("%s: index error: %s" % (top, e))
+            continue
+        sk = [x for x in lines if x.startswith("meaning index skipped:")]
+        if sk:
+            skipped = sk[0]
+            break
+        out.extend("%s: %s" % (top, x) for x in lines)
+        if lines != ["index busy"]:
+            k += 1
+    if skipped:
+        out.append(skipped)
+    out.append("indexed %d of %d projects" % (k, n))
+    return out
+
+
+def log_hook_error(exc):
+    """One JSON line in <state>/hooks-error.jsonl. Never raises."""
+    try:
+        os.makedirs(STATE_DIR, exist_ok=True)
+        with open(os.path.join(STATE_DIR, "hooks-error.jsonl"), "a", encoding="utf-8") as f:
+            f.write(json.dumps({"ts": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                                "hook": "recall.py session-end", "version": "1.8.0", "sid": None,
+                                "error": "%s: %s" % (type(exc).__name__, exc)}) + "\n")
+    except Exception:
+        pass
+
+
+def cmd_session_end():
+    """SessionEnd hook: start a detached `index --cwd <cwd>`; print nothing; always exit 0."""
+    try:
+        raw = "" if sys.stdin is None or sys.stdin.isatty() else sys.stdin.read()
+        d = json.loads(raw) if raw.strip() else None
+        cwd = d.get("cwd") if isinstance(d, dict) else None
+        if not isinstance(cwd, str) or not cwd.strip() or not os.path.isdir(cwd):
+            return 0
+        rdir = os.path.join(STATE_DIR, "recall")
+        os.makedirs(rdir, exist_ok=True)
+        log = open(os.path.join(rdir, "index.log"), "ab")
+        try:
+            subprocess.Popen([sys.executable, os.path.abspath(__file__), "index", "--cwd", cwd, "--max-seconds", "600"],
+                             stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+                             start_new_session=True, close_fds=True)
+        finally:
+            log.close()
+    except BaseException as e:
+        if not isinstance(e, KeyboardInterrupt):
+            log_hook_error(e)
+    return 0
+
+
 # ---------------------------------------------------------------- open / user
 
 def cap_body(text, full, mid=None, start=0):
@@ -998,7 +1111,9 @@ def build_parser():
     common(p)
     p = sub.add_parser("index")
     p.add_argument("--max-seconds", type=float, default=0)
+    p.add_argument("--all", action="store_true")
     common(p)
+    p = sub.add_parser("session-end")
     p = sub.add_parser("handoffs")
     common(p)
     return ap
@@ -1014,6 +1129,11 @@ def emit(lines, cap=OUT_CAP):
 def main(argv):
     try:
         a = build_parser().parse_args(argv)
+        if a.cmd == "session-end":
+            return cmd_session_end()
+        if a.cmd == "index" and a.all:
+            emit(cmd_index_all(a))
+            return 0
         cwd = os.path.expanduser(a.cwd) if a.cwd else os.getcwd()
         root = project_root(cwd)
         fn = {"search": cmd_search, "open": cmd_open, "user": cmd_user, "index": cmd_index, "handoffs": cmd_handoffs}[a.cmd]

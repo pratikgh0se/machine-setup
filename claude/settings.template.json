@@ -66,6 +66,13 @@
         ]
       }
     ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          { "type": "command", "command": "python3 __HOME__/.claude/hooks/recall.py session-end", "timeout": 5 }
+        ]
+      }
+    ],
     "PreCompact": [
       {
         "hooks": [
