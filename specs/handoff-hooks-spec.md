@@ -628,6 +628,7 @@ Port: the same files and line go to `lossless-handoff` (formerly `claude-handoff
 - (c) Wiring. The settings template (`claude/settings.template.json` in this repo), the live `~/.claude/settings.json` and the overlay get a `SessionEnd` hook that runs `python3 ~/.claude/hooks/recall.py session-end`, with a short timeout and the existing hooks untouched. A launchd agent template `launchd/recall-index.plist.tmpl` runs `recall.py index --all --max-seconds 3000` daily at 03:30, logging to `~/.local/state/claude-handoffs/recall/index-all.log`. It is installed the same way as the other `launchd/` agents.
 - (d) Hooks become 1.8.0 (`HOOK_VERSION` in both hooks; ACs 136 and 150 read 1.8.0).
 - Acceptance:
+  - Ruling: a transcript is identified by its session id (the `.jsonl` file stem), which Claude Code makes unique (a UUID); fixtures use distinct session ids per transcript.
   - 167. With a temp HOME holding transcripts for 3 git projects (one twice, under two project folders), one folder whose cwd no longer exists, and one non-git cwd: `index --all` against the fake embedding server indexes exactly the 3 projects once each, prints `indexed 3 of 3 projects`, and exits 0. A second run adds 0 rows.
   - 168. With the server down (closed port): `index --all` prints `meaning index skipped:` exactly once and `indexed 0 of 3 projects`, and exits 0 within 10 s.
   - 169. With one project's lock held: that project prints `index busy`, the others are indexed, and it exits 0.

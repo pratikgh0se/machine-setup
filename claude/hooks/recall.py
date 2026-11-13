@@ -896,7 +896,7 @@ def cmd_index_all(a):
         if sk:
             skipped = sk[0]
             break
-        out.extend("%s: %s" % (top, x) for x in lines)
+        out.append("%s: %s" % (top, "; ".join(lines)))  # F44.13(a): one line per project
         if lines != ["index busy"]:
             k += 1
     if skipped:
