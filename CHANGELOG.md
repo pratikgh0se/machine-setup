@@ -4,6 +4,8 @@ All notable changes are recorded here. The format follows [Keep a Changelog](htt
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-11-14
+
 ### Added
 
 - Handoff hooks 1.8.0 (F44.13): the recall meaning index now refreshes for every project, not only on compaction. `recall.py index --all [--max-seconds N]` indexes every git project with Claude Code history (newest first, stops once if the embedding server is down). A new `SessionEnd` hook runs `recall.py session-end`, which starts a detached `index --cwd` for the ended session's project. A daily 03:30 launchd job (`launchd/recall-index.plist.tmpl`) runs `index --all --max-seconds 3000`.
