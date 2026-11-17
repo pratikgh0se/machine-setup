@@ -1419,6 +1419,7 @@ def agent_view(d):
         sub = ""
     v = dict(d)
     v["session_id"] = key
+    v["_parent_sid"] = psid.replace("/", "_")  # health rows carry the PARENT's sid, never the key
     v["transcript_path"] = sub
     return v, key, bool(sub) and os.path.isfile(sub)
 
@@ -1568,7 +1569,7 @@ def write_health(d, sid, info, body, status_override=None, sidecar=True, reasons
     trig = d.get("trigger")
     line = {
         "ts": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "sid": sid[:8] if d.get("session_id") else "unknown",
+        "sid": str(d.get("_parent_sid") or sid)[:8] if d.get("session_id") else "unknown",
         "trigger": trig if trig in ("auto", "manual", "recovered") else "unknown",
         "agent_file": info["agent_file"],
         "stale_sections": info["stale_sections"],
@@ -1784,11 +1785,11 @@ def reconcile(days=7):
     killed = 0
     for pf in glob.glob(os.path.join(HANDOFFS_DIR, "*-pending.json")):
         try:
-            sid8 = os.path.basename(pf)[:8]
-            if sid8 in canary_sids:
-                continue
             stem = os.path.basename(pf)[:-len("-pending.json")]
             aid = stem.split("-a-", 1)[1] if "-a-" in stem else ""
+            sid8 = (stem.split("-a-", 1)[0] if aid else stem)[:8]
+            if sid8 in canary_sids:
+                continue
             pts = None
             try:
                 with open(pf, encoding="utf-8") as f:
