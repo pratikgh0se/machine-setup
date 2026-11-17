@@ -3,7 +3,7 @@
 # Idempotent and safe to re-run (loaded jobs with identical plists, and installed plugins, are skipped). Backs up any file it would overwrite to ~/.machine-setup-backup/<ts>/.
 #   ./bootstrap.sh --dry-run      show what would happen, change nothing
 #   ./bootstrap.sh                install
-# Flags: --no-repos  --all-repos (also clone big optional upstream repos)  --launchd (install launchd jobs)  --no-plugins  --managed-hooks (write a managed-settings.json with the handoff hooks; prints the sudo command, never runs it)
+# Flags: --no-repos  --all-repos (also clone big optional upstream repos)  --launchd (install launchd jobs)  --no-plugins  --managed-hooks (standalone: only write a managed-settings.json with the handoff hooks and print the sudo command; never runs sudo)
 # Overlay: MACHINE_SETUP_PRIVATE=<dir> (else ../machine-setup-private; "none" disables). See OVERLAY.md.
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"   # setup/
@@ -119,6 +119,58 @@ if [ -d "$REPO/agents" ] || [ -d "$OVAG" ]; then
 fi
 OREPOS=""; [ -n "$OVERLAY" ] && [ -f "$OVERLAY/repos.tsv" ] && OREPOS="$OVERLAY/repos.tsv"
 
+# F46.g: handoff hooks in the system-level managed settings, so headless runs and --setting-sources without `user` keep them.
+# Standalone mode: does only this and exits (no repos, plugins, brew, network or other steps). Writes <state>/machine-setup/managed-settings.json and PRINTS the one sudo command; this script never runs sudo.
+if [ $MANAGED -eq 1 ]; then
+  say; say "== 4b. managed hooks (--managed-hooks)"
+  MS_OUT="$H/.local/state/machine-setup/managed-settings.json"
+  case "$(uname -s)" in Darwin) MS_SYS="/Library/Application Support/ClaudeCode/managed-settings.json";; *) MS_SYS="/etc/claude-code/managed-settings.json";; esac
+  [ -n "${HANDOFF_MANAGED_SETTINGS_PATH:-}" ] && MS_SYS="$HANDOFF_MANAGED_SETTINGS_PATH"
+  render_to "$EFF/claude/settings.json" "$TMP/settings.rendered.json"
+  if [ $DRY -eq 1 ]; then act "write      ${MS_OUT#$H/}  (existing system file read-only: $MS_SYS)"
+  else
+    mkdir -p "$(dirname "$MS_OUT")"
+    if python3 - "$TMP/settings.rendered.json" "$MS_SYS" "$MS_OUT" <<'PY'
+import json, os, sys
+tpl_path, sys_path, out_path = sys.argv[1:4]
+tpl = json.load(open(tpl_path))
+cur = {}
+if os.path.isfile(sys_path):
+    try:
+        cur = json.load(open(sys_path))
+        if not isinstance(cur, dict):
+            raise ValueError("not an object")
+    except Exception as e:
+        sys.stderr.write(f"cannot merge into {sys_path}: {e}\n")
+        sys.exit(1)
+WANT = {"PreCompact": None, "SessionStart": {"compact", "startup", "resume"}, "SessionEnd": None}
+HOOKS = ("precompact-handoff.py", "postcompact-inject.py", "recall.py")
+hooks = cur.setdefault("hooks", {})
+if not isinstance(hooks, dict):
+    sys.stderr.write("existing 'hooks' is not an object\n"); sys.exit(1)
+for ev, matchers in WANT.items():
+    groups = [g for g in (tpl.get("hooks") or {}).get(ev, [])
+              if (matchers is None or g.get("matcher") in matchers)
+              and any(any(n in (h.get("command") or "") for n in HOOKS) for h in g.get("hooks", []))]
+    have = hooks.setdefault(ev, [])
+    for g in groups:
+        if g not in have:
+            have.append(g)
+tmp = out_path + ".tmp"
+with open(tmp, "w") as f:
+    json.dump(cur, f, indent=2)
+    f.write("\n")
+os.replace(tmp, out_path)
+PY
+    then act "wrote      ${MS_OUT#$H/}"
+    else warn "managed-settings.json not written"; ERR=1; fi
+  fi
+  say "  To make the handoff hooks always load, run this yourself (needs admin rights; this script never runs sudo):"
+  say "sudo install -m 644 $MS_OUT \"$MS_SYS\""
+  say "  Only --bare skips managed hooks. Restart open Claude Code sessions afterwards."
+  exit $ERR
+fi
+
 say "machine-setup bootstrap  HOME=$H  $([ $DRY -eq 1 ] && echo '(DRY RUN)')"
 if [ -n "$OVERLAY" ]; then say "  overlay: $OVERLAY"; else say "  overlay: none (generic install)"; fi
 
@@ -222,57 +274,6 @@ PY
   fi
 fi
 say "  Restart open Claude Code sessions: hooks load when a session starts."
-
-# F46.g: handoff hooks in the system-level managed settings, so headless runs and --setting-sources without `user` keep them.
-# Writes <state>/machine-setup/managed-settings.json and PRINTS the one sudo command; this script never runs sudo.
-if [ $MANAGED -eq 1 ]; then
-  say; say "== 4b. managed hooks (--managed-hooks)"
-  MS_OUT="$H/.local/state/machine-setup/managed-settings.json"
-  case "$(uname -s)" in Darwin) MS_SYS="/Library/Application Support/ClaudeCode/managed-settings.json";; *) MS_SYS="/etc/claude-code/managed-settings.json";; esac
-  [ -n "${HANDOFF_MANAGED_SETTINGS_PATH:-}" ] && MS_SYS="$HANDOFF_MANAGED_SETTINGS_PATH"
-  render_to "$EFF/claude/settings.json" "$TMP/settings.rendered.json"
-  if [ $DRY -eq 1 ]; then act "write      ${MS_OUT#$H/}  (existing system file read-only: $MS_SYS)"
-  else
-    mkdir -p "$(dirname "$MS_OUT")"
-    if python3 - "$TMP/settings.rendered.json" "$MS_SYS" "$MS_OUT" <<'PY'
-import json, os, sys
-tpl_path, sys_path, out_path = sys.argv[1:4]
-tpl = json.load(open(tpl_path))
-cur = {}
-if os.path.isfile(sys_path):
-    try:
-        cur = json.load(open(sys_path))
-        if not isinstance(cur, dict):
-            raise ValueError("not an object")
-    except Exception as e:
-        sys.stderr.write(f"cannot merge into {sys_path}: {e}\n")
-        sys.exit(1)
-WANT = {"PreCompact": None, "SessionStart": {"compact", "startup", "resume"}, "SessionEnd": None}
-HOOKS = ("precompact-handoff.py", "postcompact-inject.py", "recall.py")
-hooks = cur.setdefault("hooks", {})
-if not isinstance(hooks, dict):
-    sys.stderr.write("existing 'hooks' is not an object\n"); sys.exit(1)
-for ev, matchers in WANT.items():
-    groups = [g for g in (tpl.get("hooks") or {}).get(ev, [])
-              if (matchers is None or g.get("matcher") in matchers)
-              and any(any(n in (h.get("command") or "") for n in HOOKS) for h in g.get("hooks", []))]
-    have = hooks.setdefault(ev, [])
-    for g in groups:
-        if g not in have:
-            have.append(g)
-tmp = out_path + ".tmp"
-with open(tmp, "w") as f:
-    json.dump(cur, f, indent=2)
-    f.write("\n")
-os.replace(tmp, out_path)
-PY
-    then act "wrote      ${MS_OUT#$H/}"
-    else warn "managed-settings.json not written"; ERR=1; fi
-  fi
-  say "  To make the handoff hooks always load, run this yourself (needs admin rights; this script never runs sudo):"
-  say "sudo install -m 644 $MS_OUT \"$MS_SYS\""
-  say "  Only --bare skips managed hooks. Restart open Claude Code sessions afterwards."
-fi
 
 say; say "== 5. ~/.agents skills"
 if [ -d "$EFF/agents" ]; then
