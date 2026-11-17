@@ -388,6 +388,61 @@ def fit_recovered(txt):
     return out if total(out) <= HARD_MAX else out[: max(HARD_MAX - len(RECOVERED_FIRST) - len(PREFIX) - 1, 0)]
 
 
+def write_json_atomic(path, obj):
+    tmp = f"{path}.tmp{os.getpid()}"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(obj, f)
+    os.replace(tmp, path)
+
+
+def last_boundary_ts(path):
+    """`timestamp` of the last compact_boundary record, read from the tail of the file (None if none)."""
+    size = os.path.getsize(path)
+    pos, buf = size, b""
+    with open(path, "rb") as f:
+        while pos > 0 and size - pos < 16 * 1024 * 1024:
+            step = min(1 << 18, pos)
+            pos -= step
+            f.seek(pos)
+            buf = f.read(step) + buf
+            lines = buf.split(b"\n")
+            for ln in reversed(lines[1:] if pos > 0 else lines):
+                if b"compact_boundary" in ln:
+                    try:
+                        o = json.loads(ln)
+                    except Exception:
+                        continue
+                    if isinstance(o, dict) and (o.get("subtype") == "compact_boundary" or o.get("type") == "compact_boundary"):
+                        return o.get("timestamp") if isinstance(o.get("timestamp"), str) else None
+    return None
+
+
+def write_receipt(d, key, kind, text):
+    """F47.a: append one line to <state>/receipts.jsonl for a handoff part 1 emitted. Never raises, never changes output."""
+    try:
+        import hashlib
+        aid = d.get("agent_id")
+        aid = aid.strip() if isinstance(aid, str) and aid.strip() else None
+        psid = str(d.get("session_id") or "unknown").replace("/", "_")
+        tp = d.get("transcript_path") if isinstance(d.get("transcript_path"), str) else ""
+        if aid and tp and "/subagents/" not in tp:
+            tp = os.path.join(os.path.dirname(tp), str(d.get("session_id")), "subagents", f"agent-{aid}.jsonl")
+        try:
+            bts = last_boundary_ts(tp) if tp else None
+        except Exception:
+            bts = None
+        with open(os.path.join(HANDOFFS_DIR, f"{key}-latest.md"), "rb") as f:
+            hsha = hashlib.sha256(f.read()).hexdigest()
+        row = {"ts": utc_now(), "sid": psid[:8], "agent_id": aid, "key": key, "transcript": tp, "boundary_ts": bts,
+               "kind": kind, "handoff_sha256": hsha, "part1_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+               "part1_head": text[:300]}
+        with open(os.path.join(HANDOFFS_DIR, "receipts.jsonl"), "a", encoding="utf-8") as f:
+            f.write(json.dumps(row) + "\n")
+    except BaseException as e:
+        if not isinstance(e, KeyboardInterrupt):
+            log_error(e)
+
+
 def try_recover(d, sid):
     """F45.b: run `precompact-handoff.py --recover` with the same hook JSON (deadline 6 s). Returns the text to emit, or
     None after logging to hooks-error.jsonl (the caller then falls back to the DEGRADED text)."""
@@ -512,6 +567,41 @@ def check_mode():
                 os.replace(tmp, rp)
     except Exception as e:
         log_error(e)
+    try:  # F47.c: a proof run with failures, shown once
+        prows = []
+        with open(os.path.join(HANDOFFS_DIR, "proofs.jsonl"), encoding="utf-8", errors="replace") as f:
+            for ln in f:
+                try:
+                    o = json.loads(ln)
+                except Exception:
+                    continue
+                if isinstance(o, dict) and isinstance(o.get("ts"), str):
+                    prows.append(o)
+        if prows:
+            newest = max(r["ts"] for r in prows)
+            pnp = os.path.join(HANDOFFS_DIR, "proof-notice.json")
+            pn = read_json(pnp) or {}
+            if newest > str(pn.get("noticed_ts") or ""):
+                nf = sum(1 for r in prows if r["ts"] == newest for v in (r.get("checks") or {}).values() if v == "fail")
+                if nf > 0:
+                    problems.append(f"proof failed: {nf} checks; see proof-report.md")
+                write_json_atomic(pnp, {"noticed_ts": newest})
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        log_error(e)
+    try:  # F48.d: failing or stale claims, shown once per change of the set
+        cs = read_json(os.path.join(HANDOFFS_DIR, "claims-status.json"))
+        if cs:
+            bad = sorted(c.get("id") for c in (cs.get("claims") or []) if isinstance(c, dict) and c.get("status") in ("fail", "stale"))
+            cnp = os.path.join(HANDOFFS_DIR, "claims-notice.json")
+            cn = read_json(cnp) or {}
+            if bad != (cn.get("set") if isinstance(cn.get("set"), list) else []):
+                if bad:
+                    problems.append(f"claims: {len(bad)} failing or stale; see claims-report.md")
+                write_json_atomic(cnp, {"set": bad})
+    except Exception as e:
+        log_error(e)
     if problems:
         sys.stdout.write("HANDOFF CHECK: " + "; ".join(problems) + ". Run the installer again, then restart Claude Code.\n")
 
@@ -564,6 +654,7 @@ try:
                 rec = try_recover(d, sid)
                 if rec is not None:
                     emit(rec)
+                    write_receipt(d, sid, "recovered", rec)
                     raise SystemExit(0)
             if not txt:
                 write_degraded(sid, ["handoff_missing"], trig)
@@ -588,6 +679,8 @@ try:
                 outs = render(first, txt, os.path.abspath(p))
                 if len(outs) >= PART:
                     emit(outs[PART - 1])
+                    if PART == 1:
+                        write_receipt(d, sid, "normal", outs[0])
         except SystemExit:
             raise
         except BaseException:

@@ -877,6 +877,15 @@ def ledger_error_of(err):
     return err or "failed"
 
 
+def _snap(led, which, entries):
+    """F47.a: remember the entry ids (`D<n>`) and the superseded ones of a ledger state in `led`."""
+    try:
+        led["ids_" + which] = ["D%d" % i for i in sorted(entries)]
+        led["sup_" + which] = ["D%d" % i for i in sorted(entries) if entries[i]["kind"] == "sup"]
+    except Exception:
+        pass
+
+
 def ledger_merge(sid, tp, root, led, timeout):
     """Thread body: lock, merge the new conversation into the ledger as a delta, write. Fills `led`
     (status ok|unchanged|failed|locked, restored, error). `timeout` covers the lock wait and the claude
@@ -910,6 +919,8 @@ def ledger_merge(sid, tp, root, led, timeout):
         except Exception:
             state = {}
         last_ts = state.get("lastEntryTs") if isinstance(state.get("lastEntryTs"), str) else None
+        _snap(led, "before", prev)  # F47.a: evidence for the decisions_safe proof
+        _snap(led, "after", prev)
         items, newest = merge_items(tp, ts_ms(last_ts) if last_ts else None)
         if not items:
             led["status"] = "unchanged"
@@ -930,6 +941,7 @@ def ledger_merge(sid, tp, root, led, timeout):
             write_atomic(lpath, ledger_text(root, res))
         write_atomic(spath, json.dumps({"v": 1, "root": root, "updatedAt": int(time.time() * 1000), "lastSid": sid,
                                         "lastEntryTs": newest or last_ts}))
+        _snap(led, "after", res)
         led["status"] = "ok" if changes else "unchanged"
         led["restored"] = 0
     except BaseException as e:
@@ -1254,6 +1266,9 @@ def build(d, info, mode=None):
             led["status"], led["error"] = "failed", "timeout"
     info["ledger"] = led["status"]
     info["ledger_restored"] = led["restored"]
+    if "ids_before" in led:  # F47.a: only when the ledger was actually read for a merge
+        info["ledger_ids"] = {"ledger_ids_before": led["ids_before"], "ledger_ids_after": led.get("ids_after", led["ids_before"]),
+                              "superseded_before": led.get("sup_before", []), "superseded_after": led.get("sup_after", [])}
     info["ledger_error"] = led.get("error", "") if led["status"] in ("failed", "locked") else ""
     lblock = ""
     if root is not None:
@@ -1591,6 +1606,8 @@ def write_health(d, sid, info, body, status_override=None, sidecar=True, reasons
         "hook_version": HOOK_VERSION,
         "canary_child": bool(os.environ.get("HANDOFF_CANARY")),
     }
+    if isinstance(info.get("ledger_ids"), dict):
+        line.update(info["ledger_ids"])
     if agent_id_of(d):  # F46.b
         line["agent_id"] = agent_id_of(d)
         line["agent_type"] = d.get("agent_type") if isinstance(d.get("agent_type"), str) else ""
@@ -1619,7 +1636,11 @@ def write_health(d, sid, info, body, status_override=None, sidecar=True, reasons
         pass
 
 
+_OUTLOG = []
+
+
 def _out(text):
+    _OUTLOG.append(text)
     sys.stdout.buffer.write((text + "\n").encode("utf-8", "replace"))
     sys.stdout.buffer.flush()
 
@@ -1834,6 +1855,509 @@ def reconcile(days=7):
         log_error("unknown", e)
 
 
+# ---------------------------------------------------------------- F47 proof receipts, F48 claims register
+
+def _read_jsonl(path):
+    rows = []
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                try:
+                    o = json.loads(line)
+                except Exception:
+                    continue
+                if isinstance(o, dict):
+                    rows.append(o)
+    except Exception:
+        pass
+    return rows
+
+
+def _norm_ws(s):
+    return " ".join(str(s).split())
+
+
+def _norm_id(x):
+    x = str(x).strip()
+    return "D" + x if x.isdigit() else x
+
+
+def _user_text(rec):
+    """Plain typed text of a user record (no tool results), or None."""
+    msg = rec.get("message")
+    if not isinstance(msg, dict) or rec.get("type") != "user" or rec.get("isMeta") or rec.get("isCompactSummary"):
+        return None
+    c = msg.get("content")
+    if isinstance(c, str):
+        return c
+    if isinstance(c, list):
+        if any(isinstance(b, dict) and b.get("type") == "tool_result" for b in c):
+            return None
+        return "\n".join(b.get("text", "") for b in c if isinstance(b, dict) and b.get("type") == "text")
+    return None
+
+
+def _plain_messages(path):
+    """[(lineno, ts_ms, role, text)] of single-segment user/assistant messages, read independently of recall."""
+    out = []
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for n, line in enumerate(f, 1):
+                if '"user"' not in line and '"assistant"' not in line:
+                    continue
+                try:
+                    o = json.loads(line)
+                except Exception:
+                    continue
+                if not isinstance(o, dict):
+                    continue
+                t = o.get("type")
+                if t == "user":
+                    tx = _user_text(o)
+                elif t == "assistant":
+                    c = (o.get("message") or {}).get("content") if isinstance(o.get("message"), dict) else None
+                    if isinstance(c, str):
+                        tx = c
+                    elif isinstance(c, list) and not any(isinstance(b, dict) and b.get("type") == "tool_use" for b in c):
+                        tx = "\n".join(b.get("text", "") for b in c if isinstance(b, dict) and b.get("type") == "text")
+                    else:
+                        tx = None
+                else:
+                    continue
+                if tx is None:
+                    continue
+                out.append((n, ts_ms(o.get("timestamp")), t, tx))
+    except Exception:
+        pass
+    return out
+
+
+def _first_cwd(path):
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                if '"cwd"' in line:
+                    try:
+                        c = json.loads(line).get("cwd")
+                    except Exception:
+                        continue
+                    if isinstance(c, str) and c:
+                        return c
+    except Exception:
+        pass
+    return None
+
+
+def _recall_run(args, timeout=30):
+    import subprocess
+    r = subprocess.run([sys.executable] + args, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
+    return r.stdout or ""
+
+
+def check_lossless(rc):
+    rp = recall_path()
+    if not rp:
+        return "skip", "recall.py absent"
+    tp = rc.get("transcript")
+    if not isinstance(tp, str) or not os.path.isfile(tp):
+        return "skip", "transcript gone"
+    bms = ts_ms(rc.get("boundary_ts"))
+    if bms is None:
+        return "skip", "no boundary"
+    pool = [m for m in _plain_messages(tp)
+            if m[1] is not None and m[1] < bms and len(m[3]) >= 30 and m[3] == m[3].strip()
+            and "<system-reminder" not in m[3] and not m[3].startswith("<") and "[redacted]" not in m[3]]
+    if len(pool) < 5:
+        return "skip", "fewer than 5 messages"
+    import random
+    rnd = random.Random(hashlib.sha256((str(rc.get("ts")) + str(rc.get("key"))).encode("utf-8")).hexdigest())
+    order = list(range(len(pool)))
+    rnd.shuffle(order)
+    sub = bool(rc.get("agent_id"))
+    stem = os.path.basename(tp)[:-len(".jsonl")]
+    if sub and stem.startswith("agent-"):
+        stem = stem[len("agent-"):]
+    sid8 = stem[:8]
+    cwd = _first_cwd(tp) or os.getcwd()
+    passes = 0
+    for i in order:
+        n, _t, role, text = pool[i]
+        phrase = text[:60].split("\n")[0]
+        if len(phrase.strip()) < 10:
+            continue
+        try:
+            sargs = [rp, "search", phrase, "--fixed", "--keyword", "--limit", "100", "--cwd", cwd] + (["--subagents"] if sub else [])
+            hits = []
+            for ln in _recall_run(sargs).splitlines():
+                m = re.match(r"^([A-Za-z0-9_-]+):(\d+) \d{4}-", ln)
+                if m and m.group(1) == sid8:
+                    hits.append(int(m.group(2)))
+            if not hits:
+                return "fail", f"line {n}: recall found no hit for the message"
+            line = n if n in hits else hits[0]
+            out = _recall_run([rp, "open", f"{sid8}:{line}", "--full", "--around", "0", "--cwd", cwd])
+            lines = out.split("\n")
+            if not lines or not lines[0].startswith("--- "):
+                return "fail", f"line {n}: recall open printed no message"
+            body = "\n".join(lines[1:])
+            body = body[:-1] if body.endswith("\n") else body
+            if body != text:
+                if "[redacted]" in body:
+                    continue  # recall hides secrets; that message cannot be compared byte for byte
+                return "fail", f"line {n}: recall printed different text ({len(body)} vs {len(text)} chars)"
+            passes += 1
+            if passes >= 5:
+                return "pass", "5 of 5 identical"
+        except Exception as e:
+            return "fail", f"line {n}: recall error {type(e).__name__}"
+    return "skip", "fewer than 5 messages could be compared"
+
+
+def _handoff_file_for(rc):
+    key, want = rc.get("key"), rc.get("handoff_sha256")
+    if not key or not want:
+        return None
+    for p in glob.glob(os.path.join(HANDOFFS_DIR, f"{key}-*.md")):
+        b = os.path.basename(p)
+        if not (b.endswith("-latest.md") or re.search(r"-\d{8}T\d{6}Z(-prev)?\.md$", b)):
+            continue
+        try:
+            with open(p, "rb") as f:
+                if hashlib.sha256(f.read()).hexdigest() == want:
+                    return p
+        except Exception:
+            continue
+    return None
+
+
+def check_right_agent(rc):
+    hp = _handoff_file_for(rc)
+    if not hp:
+        return "skip", "handoff file no longer exists"
+    tp = rc.get("transcript")
+    if not isinstance(tp, str) or not os.path.isfile(tp):
+        return "skip", "transcript gone"
+    try:
+        text = open(hp, encoding="utf-8", errors="replace").read()
+    except Exception:
+        return "skip", "handoff file unreadable"
+    m = re.search(r"(?ms)^## Last user messages[^\n]*\n(.*?)(?=^## |\Z)", text)
+    if not m:
+        return "skip", "no user messages section"
+    quoted = [ln[2:].strip() for ln in m.group(1).splitlines() if ln.startswith("- ")]
+    if not quoted:
+        return "skip", "no user messages section"
+    users = []
+    for _n, _t, role, tx in _plain_messages(tp):
+        if role == "user":
+            users.append(_norm_ws(tx))
+    for q in quoted:
+        nq = _norm_ws(q)
+        if nq.endswith("..."):
+            nq = nq[:-3].rstrip()
+        if not nq:
+            continue
+        if not any(nq in u for u in users):
+            return "fail", "not in own transcript: " + nq[:80]
+    return "pass", f"{len(quoted)} lines found"
+
+
+def _strings(o, out, depth=0):
+    if depth > 8:
+        return
+    if isinstance(o, str):
+        out.append(o)
+        if o.startswith("{"):
+            try:
+                _strings(json.loads(o), out, depth + 1)
+            except Exception:
+                pass
+    elif isinstance(o, dict):
+        for v in o.values():
+            _strings(v, out, depth + 1)
+    elif isinstance(o, list):
+        for v in o:
+            _strings(v, out, depth + 1)
+
+
+def check_delivered(rc):
+    tp, bts, head = rc.get("transcript"), rc.get("boundary_ts"), rc.get("part1_head")
+    if not isinstance(tp, str) or not os.path.isfile(tp):
+        return "skip", "transcript gone"
+    if not bts or not isinstance(head, str) or not head:
+        return "skip", "no boundary"
+    want = _norm_ws(head)
+    seen_boundary, after, found = False, 0, False
+    try:
+        with open(tp, encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+    except Exception:
+        return "skip", "transcript unreadable"
+    last = -1
+    for i, line in enumerate(lines):
+        if "compact_boundary" in line:
+            try:
+                o = json.loads(line)
+            except Exception:
+                continue
+            if is_boundary(o) and o.get("timestamp") == bts:
+                last = i
+    if last < 0:
+        return "skip", "boundary not in transcript"
+    for line in lines[last + 1:]:
+        try:
+            o = json.loads(line)
+        except Exception:
+            continue
+        if not isinstance(o, dict):
+            continue
+        after += 1
+        if o.get("type") == "attachment" or "attachment" in o:
+            ss = []
+            _strings(o.get("attachment"), ss)
+            if any(want in _norm_ws(s) for s in ss):
+                found = True
+                break
+    if found:
+        return "pass", "found after the boundary"
+    if after == 0:
+        return "skip", "no record after the boundary yet"
+    return "fail", "no hook context after the boundary contains the part-1 head"
+
+
+def check_decisions_safe(rc, health):
+    sid, aid, rts = rc.get("sid"), rc.get("agent_id") or None, _iso_epoch(rc.get("ts"))
+    best = None
+    for r in health:
+        if "ledger_ids_before" not in r or r.get("sid") != sid or (r.get("agent_id") or None) != aid:
+            continue
+        e = _iso_epoch(r.get("ts"))
+        if e is None or (rts is not None and not (rts - 900 <= e <= rts)):
+            continue
+        if best is None or e >= best[0]:
+            best = (e, r)
+    if best is None:
+        return "skip", "no ledger merge"
+    r = best[1]
+    before = [_norm_id(x) for x in r.get("ledger_ids_before") or []]
+    after = {_norm_id(x) for x in r.get("ledger_ids_after") or []}
+    sup_b = [_norm_id(x) for x in r.get("superseded_before") or []]
+    sup_a = {_norm_id(x) for x in r.get("superseded_after") or []}
+    lost = [x for x in before if x not in after]
+    if lost:
+        return "fail", "lost " + ", ".join(lost)
+    back = [x for x in sup_b if x in after and x not in sup_a]
+    if back:
+        return "fail", ", ".join(back) + " active again"
+    return "pass", f"{len(before)} ids kept"
+
+
+CHECKS = ["lossless", "right_agent", "delivered", "decisions_safe"]
+
+
+def _rkey(r):
+    return (str(r.get("ts")), str(r.get("sid")), str(r.get("agent_id") or ""))
+
+
+def prove(days=7):
+    """F47.b: verdicts for receipts in the window, appended to proofs.jsonl; prints the summary line; writes
+    proof-report.md and (F48) claims-status.json / claims-report.md. Never raises."""
+    now = time.time()
+    start = now - days * 86400
+    run_ts = datetime.datetime.fromtimestamp(now, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    receipts = [r for r in _read_jsonl(os.path.join(HANDOFFS_DIR, "receipts.jsonl"))
+                if (_iso_epoch(r.get("ts")) or 0) >= start]
+    pfile = os.path.join(HANDOFFS_DIR, "proofs.jsonl")
+    proofs = _read_jsonl(pfile)
+    have = {(str(p.get("receipt_ts")), str(p.get("sid")), str(p.get("agent_id") or "")): p for p in proofs}
+    health = _read_jsonl(HEALTH_FILE)
+    new_rows = []
+    for rc in receipts:
+        k = _rkey(rc)
+        if k in have:
+            continue
+        checks, details = {}, {}
+        for name, fn in (("lossless", check_lossless), ("right_agent", check_right_agent),
+                         ("delivered", check_delivered), ("decisions_safe", lambda r: check_decisions_safe(r, health))):
+            try:
+                v, why = fn(rc)
+            except Exception as e:
+                v, why = "skip", f"check error {type(e).__name__}"
+                log_error(rc.get("key") or "unknown", e)
+            checks[name], details[name] = v, why[:200]
+        row = {"ts": run_ts, "receipt_ts": rc.get("ts"), "sid": rc.get("sid"), "agent_id": rc.get("agent_id"),
+               "checks": checks, "details": details}
+        new_rows.append(row)
+        have[k] = row
+    if new_rows:
+        try:
+            os.makedirs(HANDOFFS_DIR, exist_ok=True)
+            with open(pfile, "a", encoding="utf-8") as f:
+                f.write("".join(json.dumps(r) + "\n" for r in new_rows))
+        except Exception as e:
+            log_error("unknown", e)
+    tally = {c: [0, 0] for c in CHECKS}  # pass, fail
+    fails, skips = [], {}
+    for rc in receipts:
+        p = have.get(_rkey(rc))
+        if not p:
+            continue
+        for c in CHECKS:
+            v = (p.get("checks") or {}).get(c)
+            why = str((p.get("details") or {}).get(c) or "")
+            if v == "pass":
+                tally[c][0] += 1
+            elif v == "fail":
+                tally[c][1] += 1
+                fails.append(f"failed {c} {str(p.get('sid'))[:8]} {p.get('agent_id') or '-'}: {why}")
+            elif v == "skip":
+                skips[(c, why)] = skips.get((c, why), 0) + 1
+
+    def pq(c):
+        return f"{tally[c][0]}/{tally[c][0] + tally[c][1]}"
+    line = (f"proof {days}d: receipts {len(receipts)} · lossless {pq('lossless')} · right-agent {pq('right_agent')} "
+            f"· delivered {pq('delivered')} · decisions-safe {pq('decisions_safe')} · failed {len(fails)}")
+    _before = list(_OUTLOG)  # reconcile's lines when run together
+    _out(line)
+    try:
+        rep_lines = ["# Proof report", "", line, ""] + _before + ([""] if _before else [])
+        rep_lines += fails + ([""] if fails else [])
+        rep_lines += [f"skipped {c}: {why or 'n/a'} x{n}" for (c, why), n in sorted(skips.items())]
+        write_atomic(os.path.join(HANDOFFS_DIR, "proof-report.md"), "\n".join(rep_lines) + "\n")
+    except Exception as e:
+        log_error("unknown", e)
+    try:
+        st = eval_claims(now)
+        if st is not None:
+            write_atomic(os.path.join(HANDOFFS_DIR, "claims-status.json"),
+                         json.dumps({"ts": run_ts, "claims": [{k: c[k] for k in ("id", "value", "rate", "as_of", "status")} for c in st]}))
+            write_atomic(os.path.join(HANDOFFS_DIR, "claims-report.md"), claims_table(st))
+    except Exception as e:
+        log_error("unknown", e)
+
+
+# ---- F48 claims register
+
+def claims_path():
+    q = os.path.join(os.path.dirname(os.path.abspath(__file__)), "claims.json")  # F48 ruling: the running script's directory
+    return q if os.path.isfile(q) else None
+
+
+def _date_epoch(v):
+    try:
+        return datetime.datetime.strptime(str(v)[:10], "%Y-%m-%d").replace(tzinfo=datetime.timezone.utc).timestamp()
+    except Exception:
+        return None
+
+
+def eval_claims(now):
+    """F48.b: list of {id, text, value, rate, as_of, status} for every claim in the register (None without a register)."""
+    cp = claims_path()
+    if not cp:
+        return None
+    try:
+        reg = json.load(open(cp, encoding="utf-8")).get("claims") or []
+    except Exception as e:
+        log_error("unknown", e)
+        return None
+    proofs = _read_jsonl(os.path.join(HANDOFFS_DIR, "proofs.jsonl"))
+    rj = None
+    try:
+        rj = json.load(open(os.path.join(HANDOFFS_DIR, "reconcile.json"), encoding="utf-8"))
+    except Exception:
+        rj = None
+    out = []
+    for c in reg:
+        if not isinstance(c, dict) or not c.get("id"):
+            continue
+        src, refresh = str(c.get("source") or ""), c.get("refresh_days") or 0
+        win, minr = c.get("window_days") or 30, c.get("min_rate")
+        p = q = 0
+        as_of_e, value = None, ""
+        if src.startswith("proof:"):
+            name = src[6:]
+            for r in proofs:
+                e = _iso_epoch(r.get("ts"))
+                v = (r.get("checks") or {}).get(name)
+                if e is None or e < now - win * 86400 or v not in ("pass", "fail"):
+                    continue
+                q += 1
+                p += 1 if v == "pass" else 0
+                as_of_e = e if as_of_e is None or e > as_of_e else as_of_e
+        elif src in ("reconcile:coverage", "reconcile:subagent_coverage") and isinstance(rj, dict):
+            as_of_e = _iso_epoch(rj.get("ts"))
+            if src == "reconcile:coverage":
+                q = int(rj.get("compactions") or 0) - int(rj.get("missed_headless") or 0)
+                p = q - int(rj.get("missed_interactive") or 0)
+            else:
+                q = int(rj.get("subagent_compactions") or 0)
+                p = q - int(rj.get("subagent_missed") or 0)
+            p = max(p, 0)
+        elif src == "static":
+            ev = c.get("evidence") or {}
+            as_of_e = _date_epoch(ev.get("date"))
+            stale = as_of_e is None or now - as_of_e > refresh * 86400
+            out.append({"id": c["id"], "text": c.get("text", ""), "value": str(ev.get("value", "")), "rate": None,
+                        "as_of": str(ev.get("date", ""))[:10], "status": "stale" if stale else "pass"})
+            continue
+        as_of = datetime.datetime.fromtimestamp(as_of_e, datetime.timezone.utc).strftime("%Y-%m-%d") if as_of_e else ""
+        if q == 0:
+            status, rate = "no-data", None
+        else:
+            rate = p / q
+            if minr is not None and rate < minr:
+                status = "fail"
+            elif as_of_e is None or now - as_of_e > refresh * 86400:
+                status = "stale"
+            else:
+                status = "pass"
+        out.append({"id": c["id"], "text": c.get("text", ""), "value": f"{p}/{q}", "rate": rate, "as_of": as_of, "status": status})
+    return out
+
+
+def claims_table(st):
+    rows = ["| id | claim | value | as of | status |", "|---|---|---|---|---|"]
+    for c in st:
+        rows.append(f"| {c['id']} | {c['text']} | {c['value']} | {c['as_of'] or '-'} | {c['status']} |")
+    return "\n".join(rows) + "\n"
+
+
+def claims_print():
+    st = eval_claims(time.time())
+    if st is None:
+        _out("no claims register found")
+        return
+    sys.stdout.buffer.write(claims_table(st).encode("utf-8"))
+    sys.stdout.buffer.flush()
+
+
+def claims_lint(path):
+    """F48.c: every [C<n>] in the file must exist and have status pass. Exit 1 on any problem."""
+    try:
+        text = open(path, encoding="utf-8", errors="replace").read()
+    except Exception as e:
+        _out(f"cannot read {path}: {type(e).__name__}")
+        raise SystemExit(1)
+    ids = sorted(set(re.findall(r"\[(C\d+)\]", text)), key=lambda x: int(x[1:]))
+    st = {c["id"]: c for c in (eval_claims(time.time()) or [])}
+    problems = []
+    for i in ids:
+        c = st.get(i)
+        if c is None:
+            problems.append(f"unknown claim {i}")
+        elif c["status"] == "fail":
+            problems.append(f"{i} fail {c['value']}")
+        elif c["status"] == "stale":
+            problems.append(f"{i} stale {c['as_of']}")
+        elif c["status"] == "no-data":
+            problems.append(f"{i} no-data")
+    if problems:
+        for p in problems:
+            _out(p)
+        raise SystemExit(1)
+    _out(f"claims ok ({len(ids)} cited)")
+
+
 _exit_code = 0
 try:
     if "--ledger-maintain" in sys.argv[1:]:
@@ -1842,7 +2366,7 @@ try:
         ledger_maintain(_a[_i + 1] if _i + 1 < len(_a) else os.getcwd())
     elif "--recover" in sys.argv[1:]:
         recover()
-    elif "--reconcile" in sys.argv[1:]:
+    elif "--reconcile" in sys.argv[1:] or "--prove" in sys.argv[1:]:
         _a = sys.argv[1:]
         _days = 7
         try:
@@ -1850,7 +2374,16 @@ try:
                 _days = int(_a[_a.index("--days") + 1])
         except Exception:
             pass
-        reconcile(_days)
+        if "--reconcile" in _a:
+            reconcile(_days)
+        if "--prove" in _a:
+            prove(_days)
+    elif "--claims-lint" in sys.argv[1:]:
+        _a = sys.argv[1:]
+        _i = _a.index("--claims-lint")
+        claims_lint(_a[_i + 1] if _i + 1 < len(_a) else "")
+    elif "--claims" in sys.argv[1:]:
+        claims_print()
     elif "--ledger-repair" in sys.argv[1:]:
         _a = sys.argv[1:]
         _i = _a.index("--ledger-repair")
