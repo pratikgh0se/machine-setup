@@ -1598,7 +1598,7 @@ def recover():
         try:  # keep what was there as an archive copy (named by its own mtime) before latest is replaced
             if os.path.isfile(latest):
                 mt = datetime.datetime.fromtimestamp(os.path.getmtime(latest), datetime.timezone.utc)
-                arch = os.path.join(HANDOFFS_DIR, f"{sid}-{mt.strftime('%Y%m%dT%H%M%SZ')}.md")
+                arch = os.path.join(HANDOFFS_DIR, f"{sid}-{mt.strftime('%Y%m%dT%H%M%SZ')}-prev.md")
                 if not os.path.exists(arch):
                     shutil.copyfile(latest, arch)
         except Exception:
