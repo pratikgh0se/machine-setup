@@ -1478,9 +1478,8 @@ def main():
             early = build(d, {"agent_file": "absent", "stale_sections": [], "fallback": "skipped", "errors": [],
                               "truncated": False, "ledger": "skipped"}, mode="quick")
             write_handoff_files(sid, p, early)
-        except BaseException as e:
-            if not isinstance(e, KeyboardInterrupt):
-                log_error(sid, e)
+        except Exception:
+            pass  # the main build below logs a failing build once (exactly one hooks-error line per failed run)
         try:
             body = build(d, info)
         except BaseException as e:
