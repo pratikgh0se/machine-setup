@@ -126,7 +126,7 @@ if [ $MANAGED -eq 1 ]; then
   MS_OUT="$H/.local/state/machine-setup/managed-settings.json"
   case "$(uname -s)" in Darwin) MS_SYS="/Library/Application Support/ClaudeCode/managed-settings.json";; *) MS_SYS="/etc/claude-code/managed-settings.json";; esac
   [ -n "${HANDOFF_MANAGED_SETTINGS_PATH:-}" ] && MS_SYS="$HANDOFF_MANAGED_SETTINGS_PATH"
-  render_to "$EFF/claude/settings.json" "$TMP/settings.rendered.json"
+  render_to "$TPL_SET" "$TMP/settings.rendered.json"  # the handoff entries come from the template, never from an overlay that may be out of date
   if [ $DRY -eq 1 ]; then act "write      ${MS_OUT#$H/}  (existing system file read-only: $MS_SYS)"
   else
     mkdir -p "$(dirname "$MS_OUT")"
