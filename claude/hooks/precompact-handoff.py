@@ -10,7 +10,7 @@ if os.environ.get("HANDOFF_HOOK_CHILD"):  # spawned by our own summary call: nev
     sys.exit(0)
 
 _T0 = time.monotonic()
-HOOK_VERSION = "1.8.0"
+HOOK_VERSION = "1.9.0"
 HOME = os.path.expanduser("~")
 HANDOFFS_DIR = (os.environ.get("HANDOFF_STATE_DIR") or "").strip() or os.path.join(HOME, ".local", "state", "claude-handoffs")
 HEALTH_FILE = os.path.join(HANDOFFS_DIR, "health.jsonl")
@@ -74,8 +74,13 @@ def one_line(v, n):
 QA_RE = re.compile(r'"([^"]*)"="([^"]*)"')
 
 
-def parse(path):
-    """Single pass over the transcript. Returns a dict; never raises."""
+def is_boundary(o):
+    return isinstance(o, dict) and (o.get("subtype") == "compact_boundary" or o.get("type") == "compact_boundary")
+
+
+def parse(path, before_last_boundary=False):
+    """Single pass over the transcript. Returns a dict; never raises. F45.b: with before_last_boundary only the
+    records before the last compact_boundary are read (what was said before the compaction)."""
     P = {"users": [], "asst": "", "files": [], "tasks": {}, "cmds": [], "todos": None,
          "qa": [], "bg": [], "user_events": [], "tool_events": [], "last_user": None}
     n_created = 0
@@ -86,7 +91,21 @@ def parse(path):
     except Exception:
         return P
     with fh:
-        for line in fh:
+        src = fh
+        if before_last_boundary:
+            src = fh.readlines()
+            cut = -1
+            for i in range(len(src) - 1, -1, -1):
+                if "compact_boundary" in src[i]:
+                    try:
+                        if is_boundary(json.loads(src[i])):
+                            cut = i
+                            break
+                    except Exception:
+                        pass
+            if cut >= 0:
+                src = src[:cut]
+        for line in src:
             try:
                 o = json.loads(line)
             except Exception:
@@ -1148,18 +1167,25 @@ FACTS = [("users", "user_messages", _f_users), ("files", "files", _f_files),
 DROP_ORDER = ["files", "cmds", "git", "tasks", "asst", "bg", "open", "users"]  # F39.6: no more `qa`
 
 
-def build(d, info):
+RECOVER_CAP = 9300  # F45.b: a recovered handoff must fit inline in one SessionStart part
+
+
+def build(d, info, mode=None):
+    """mode None = full run; "quick" = F45.a deterministic early handoff (no model call, no ledger merge);
+    "recover" = F45.b rebuild after the fact (records before the last compact_boundary, no model call, no ledger)."""
+    cap = RECOVER_CAP if mode == "recover" else CAP
+    nomodel = mode in ("quick", "recover")
     sid = d.get("session_id", "unknown")
     cwd = d.get("cwd", "")
     tp = d.get("transcript_path", "")
     now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
-    header = (f"# Handoff (pre-compaction)\n- session: {sid}\n- cwd: {cwd}\n- trigger: {d.get('trigger')}\n"
+    header = (f"# Handoff (pre-compaction)\n- session: {sid}\n- cwd: {cwd}\n- trigger: {'recovered' if mode == 'recover' else d.get('trigger')}\n"
               f"- time: {now}\n- transcript: {tp}\n{AUTHORITY}{recall_line()}")
     footer = f"\nFull transcript: {tp}. Read it for exact details before guessing.\n"
-    P = parse(tp)
+    P = parse(tp, before_last_boundary=(mode == "recover"))
     if "toplevel" in FAULTS:
         raise RuntimeError("injected")
-    enabled = summary_enabled()
+    enabled = summary_enabled() and not nomodel
     model = summary_model() if enabled else ""
     timeout = summary_timeout()
     l_timeout = ledger_timeout()
@@ -1180,7 +1206,7 @@ def build(d, info):
     # F39: ledger root, previous active lines (for the summary), merge thread
     led = {"status": "disabled", "restored": 0}
     root = None
-    if ledger_enabled():
+    if ledger_enabled() and not nomodel:
         root = project_root(cwd)
         led["status"] = "none" if root is None else "pending"
     prev_active = []
@@ -1259,19 +1285,19 @@ def build(d, info):
     hblock = SUMMARY_HEAD_FMT.format(model) + htext + "\n\n" if htext else ""
     n, lead = total(hblock)
     for k in DROP_ORDER:
-        if n <= CAP or k == "users":
+        if n <= cap or k == "users":
             continue
         if k in secs and k not in protected:
             del secs[k]
             info["truncated"] = True
             n, lead = total(hblock)
-    if n > CAP and htext:
+    if n > cap and htext:
         info["truncated"] = True
         head = SUMMARY_HEAD_FMT.format(model)
-        room = len(htext) - (n - CAP)
+        room = len(htext) - (n - cap)
         hblock = head + trunc(htext, room) + "\n\n" if room >= 200 else ""
         n, lead = total(hblock)
-    if n > CAP and "users" in secs and "users" not in protected:
+    if n > cap and "users" in secs and "users" not in protected:
         del secs["users"]
         info["truncated"] = True
         n, lead = total(hblock)
@@ -1400,6 +1426,20 @@ def start_indexer(d, sid):
             log_error(sid, e)
 
 
+def write_pending(d, sid):
+    """F45.a: <sid>-pending.json {ts, trigger, hook_version}, atomically; write_health deletes it."""
+    trig = d.get("trigger")
+    write_atomic(os.path.join(HANDOFFS_DIR, f"{sid}-pending.json"), json.dumps({
+        "ts": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "trigger": trig if trig in ("auto", "manual") else "unknown", "hook_version": HOOK_VERSION}))
+
+
+def write_handoff_files(sid, p, body):
+    """Write the dated handoff file and copy it to <sid>-latest.md, each atomically."""
+    write_atomic(p, body)
+    write_atomic(os.path.join(HANDOFFS_DIR, f"{sid}-latest.md"), body)
+
+
 def main():
     try:
         d = json.load(sys.stdin)
@@ -1427,6 +1467,20 @@ def main():
             os.makedirs(HANDOFFS_DIR, exist_ok=True)
         except Exception:
             pass
+        try:  # F45.a: pending marker first, then the deterministic handoff, both before any model call
+            write_pending(d, sid)
+        except BaseException as e:
+            if not isinstance(e, KeyboardInterrupt):
+                log_error(sid, e)
+        ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        p = os.path.join(HANDOFFS_DIR, f"{sid}-{ts}.md")
+        try:
+            early = build(d, {"agent_file": "absent", "stale_sections": [], "fallback": "skipped", "errors": [],
+                              "truncated": False, "ledger": "skipped"}, mode="quick")
+            write_handoff_files(sid, p, early)
+        except BaseException as e:
+            if not isinstance(e, KeyboardInterrupt):
+                log_error(sid, e)
         try:
             body = build(d, info)
         except BaseException as e:
@@ -1435,11 +1489,7 @@ def main():
             log_error(sid, e)
             body = minimal_handoff(d, sid, type(e).__name__)
         try:
-            ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-            p = os.path.join(HANDOFFS_DIR, f"{sid}-{ts}.md")
-            with open(p, "w", encoding="utf-8") as f:
-                f.write(body)
-            shutil.copyfile(p, os.path.join(HANDOFFS_DIR, f"{sid}-latest.md"))
+            write_handoff_files(sid, p, body)
         except Exception:
             body = ""
     finally:
@@ -1451,7 +1501,7 @@ def main():
         start_indexer(d, sid)
     try:
         cutoff = time.time() - 14 * 86400
-        for pat in ("*.md", "*-degraded.json", "*-last-health.json"):
+        for pat in ("*.md", "*-degraded.json", "*-last-health.json", "*-pending.json"):
             for old in glob.glob(os.path.join(HANDOFFS_DIR, pat)):
                 try:
                     if os.path.isfile(old) and os.path.getmtime(old) < cutoff:
@@ -1472,7 +1522,7 @@ def write_health(d, sid, info, body, status_override=None, sidecar=True):
     line = {
         "ts": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "sid": sid[:8] if d.get("session_id") else "unknown",
-        "trigger": trig if trig in ("auto", "manual") else "unknown",
+        "trigger": trig if trig in ("auto", "manual", "recovered") else "unknown",
         "agent_file": info["agent_file"],
         "stale_sections": info["stale_sections"],
         "fallback": info["fallback"],
@@ -1493,6 +1543,12 @@ def write_health(d, sid, info, body, status_override=None, sidecar=True):
         "hook_version": HOOK_VERSION,
         "canary_child": bool(os.environ.get("HANDOFF_CANARY")),
     }
+    try:  # F45.a: the run finished (or failed visibly): the pending marker has done its job
+        if status_override == "subagent":
+            raise OSError("a subagent run never owns the parent's marker")
+        os.unlink(os.path.join(HANDOFFS_DIR, f"{sid}-pending.json"))
+    except Exception:
+        pass
     try:
         side = dict(line)
         side["reasons"] = reasons
@@ -1510,12 +1566,190 @@ def write_health(d, sid, info, body, status_override=None, sidecar=True):
         pass
 
 
+def _out(text):
+    sys.stdout.buffer.write((text + "\n").encode("utf-8", "replace"))
+    sys.stdout.buffer.flush()
+
+
+def recover():
+    """F45.b: `--recover` reads the SessionStart JSON on stdin, rebuilds the handoff from the transcript records before
+    the last compact_boundary (no model call, no ledger merge), writes the handoff and latest files (an older latest
+    is kept as an archive copy) and appends a health line with trigger and status `recovered`. Always exits 0; prints
+    one JSON line {"ok": true} or {"ok": false, "error": ...}. It does not log: the caller logs once."""
+    try:
+        try:
+            d = json.load(sys.stdin)
+        except Exception:
+            d = {}
+        if not isinstance(d, dict):
+            d = {}
+        sid = str(d.get("session_id") or "unknown").replace("/", "_")
+        tp = d.get("transcript_path")
+        if not isinstance(tp, str) or not os.path.isfile(tp):
+            _out(json.dumps({"ok": False, "error": f"transcript not found: {str(tp)[:200]}"}))
+            return
+        d = dict(d)
+        d["trigger"] = "recovered"
+        os.makedirs(HANDOFFS_DIR, exist_ok=True)
+        info = {"agent_file": "absent", "stale_sections": [], "fallback": "skipped", "errors": [], "truncated": False,
+                "ledger": "skipped"}
+        body = build(d, info, mode="recover")
+        latest = os.path.join(HANDOFFS_DIR, f"{sid}-latest.md")
+        try:  # keep what was there as an archive copy (named by its own mtime) before latest is replaced
+            if os.path.isfile(latest):
+                mt = datetime.datetime.fromtimestamp(os.path.getmtime(latest), datetime.timezone.utc)
+                arch = os.path.join(HANDOFFS_DIR, f"{sid}-{mt.strftime('%Y%m%dT%H%M%SZ')}.md")
+                if not os.path.exists(arch):
+                    shutil.copyfile(latest, arch)
+        except Exception:
+            pass
+        ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        write_handoff_files(sid, os.path.join(HANDOFFS_DIR, f"{sid}-{ts}.md"), body)
+        write_health(d, sid, info, body, status_override="recovered")
+        _out(json.dumps({"ok": True}))
+    except BaseException as e:
+        if isinstance(e, KeyboardInterrupt):
+            raise
+        _out(json.dumps({"ok": False, "error": f"{type(e).__name__}: {e}"[:300]}))
+
+
+def _iso_ms(ms):
+    return datetime.datetime.fromtimestamp(ms / 1000.0, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _iso_epoch(v):
+    try:
+        return datetime.datetime.strptime(v, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc).timestamp()
+    except Exception:
+        return None
+
+
+def reconcile(days=7):
+    """F45.c: count compact_boundary records in main transcripts against health.jsonl rows; print the summary line and
+    one line per missed interactive session; write <HANDOFFS_DIR>/reconcile.json. Never raises; always exit 0."""
+    now = time.time()
+    start_ms = (now - days * 86400) * 1000.0
+    rows = {}  # sid8 -> [(epoch, trigger)]
+    canary_sids = set()
+    try:
+        with open(HEALTH_FILE, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                try:
+                    r = json.loads(line)
+                except Exception:
+                    continue
+                if isinstance(r, dict) and r.get("canary_child"):
+                    canary_sids.add(str(r.get("sid") or ""))  # F45.c: canary sessions are excluded from every count
+                if not isinstance(r, dict) or r.get("canary_child") or r.get("trigger") == "canary":
+                    continue
+                e = _iso_epoch(r.get("ts"))
+                if e is None:
+                    continue
+                rows.setdefault(str(r.get("sid") or ""), []).append((e, r.get("trigger")))
+    except Exception:
+        pass
+    sessions = []
+    base = os.path.join(os.path.expanduser("~"), ".claude", "projects")
+    for path in sorted(glob.glob(os.path.join(base, "*", "*.jsonl"))):
+        try:
+            if "subagents" in path.split(os.sep) or os.path.getmtime(path) * 1000.0 < start_ms:
+                continue
+            if "handoff-canary" in os.path.basename(os.path.dirname(path)):
+                continue
+            n, last, ent = 0, None, None
+            with open(path, encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    has_b = "compact_boundary" in line
+                    has_e = ent is None and '"entrypoint"' in line
+                    if not (has_b or has_e):
+                        continue
+                    try:
+                        o = json.loads(line)
+                    except Exception:
+                        continue
+                    if not isinstance(o, dict):
+                        continue
+                    if ent is None and isinstance(o.get("entrypoint"), str):
+                        ent = o["entrypoint"]
+                    if has_b and is_boundary(o):
+                        t = ts_ms(o.get("timestamp"))
+                        if t is not None and t >= start_ms and t <= now * 1000.0 + 60000:
+                            n += 1
+                            last = t if last is None or t > last else last
+            if n == 0:
+                continue
+            sid8 = os.path.basename(path)[:-len(".jsonl")][:8]
+            if sid8 in canary_sids:
+                continue
+            rs = [(e, tr) for e, tr in rows.get(sid8, []) if e * 1000.0 >= start_ms - 86400000]
+            h = sum(1 for _, tr in rs if tr in ("auto", "manual"))
+            rc = sum(1 for _, tr in rs if tr == "recovered")
+            sessions.append({"sid": sid8, "project": os.path.basename(os.path.dirname(path)),
+                             "headless": bool(ent and ent.startswith("sdk")), "boundaries": n, "handoffs": h,
+                             "recovered": rc, "missed": max(0, n - h - rc), "last_boundary": _iso_ms(last)})
+        except Exception:
+            continue
+    killed = 0
+    for pf in glob.glob(os.path.join(HANDOFFS_DIR, "*-pending.json")):
+        try:
+            sid8 = os.path.basename(pf)[:8]
+            if sid8 in canary_sids:
+                continue
+            pts = None
+            try:
+                with open(pf, encoding="utf-8") as f:
+                    pts = _iso_epoch((json.load(f) or {}).get("ts"))
+            except Exception:
+                pass
+            if pts is None:
+                pts = os.path.getmtime(pf)
+            if now - pts > 200 and pts * 1000.0 >= start_ms and not any(e >= pts for e, _ in rows.get(sid8, [])):
+                killed += 1
+        except Exception:
+            continue
+    tot = {k: sum(s[k] for s in sessions) for k in ("boundaries", "handoffs", "recovered", "missed")}
+    mi = sum(s["missed"] for s in sessions if not s["headless"])
+    mh = sum(s["missed"] for s in sessions if s["headless"])
+    _out(f"compactions {tot['boundaries']} · handoffs {tot['handoffs']} · recovered {tot['recovered']} · "
+         f"missed {tot['missed']} (interactive {mi}, headless {mh}) · killed {killed}")
+    for s in sorted([s for s in sessions if s["missed"] and not s["headless"]], key=lambda s: s["last_boundary"], reverse=True):
+        _out(f"missed {s['missed']} {s['sid']} {s['project']} {s['last_boundary']}")
+    try:
+        os.makedirs(HANDOFFS_DIR, exist_ok=True)
+        rp = os.path.join(HANDOFFS_DIR, "reconcile.json")
+        out = {"ts": datetime.datetime.fromtimestamp(now, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+               "days": days, "compactions": tot["boundaries"], "handoffs": tot["handoffs"],
+               "recovered": tot["recovered"], "missed": tot["missed"], "missed_interactive": mi,
+               "missed_headless": mh, "killed": killed, "sessions": sessions}
+        try:
+            with open(rp, encoding="utf-8") as f:
+                old = json.load(f)
+            if isinstance(old, dict) and old.get("noticed_ts"):
+                out["noticed_ts"] = old["noticed_ts"]
+        except Exception:
+            pass
+        write_atomic(rp, json.dumps(out))
+    except Exception as e:
+        log_error("unknown", e)
+
+
 _exit_code = 0
 try:
     if "--ledger-maintain" in sys.argv[1:]:
         _a = sys.argv[1:]
         _i = _a.index("--ledger-maintain")
         ledger_maintain(_a[_i + 1] if _i + 1 < len(_a) else os.getcwd())
+    elif "--recover" in sys.argv[1:]:
+        recover()
+    elif "--reconcile" in sys.argv[1:]:
+        _a = sys.argv[1:]
+        _days = 7
+        try:
+            if "--days" in _a and int(_a[_a.index("--days") + 1]) >= 1:
+                _days = int(_a[_a.index("--days") + 1])
+        except Exception:
+            pass
+        reconcile(_days)
     elif "--ledger-repair" in sys.argv[1:]:
         _a = sys.argv[1:]
         _i = _a.index("--ledger-repair")
