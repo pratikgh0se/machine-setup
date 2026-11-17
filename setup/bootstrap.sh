@@ -188,6 +188,41 @@ while IFS=$'\t' read -r p kind; do
   esac
 done < "$EFF/claude/hook-deps.tsv"
 
+# F45.d: manifest of the hook files this run installed (sha256 of what is now in ~/.claude/hooks); the SessionStart
+# `postcompact-inject.py --check` compares it. Left untouched when the hashes are unchanged (idempotent).
+if [ -d "$EFF/claude/hooks" ]; then
+  if [ $DRY -eq 1 ]; then act "write      .claude/hooks/.handoff-manifest.json"
+  else
+    python3 - "$EFF/claude/hooks" "$C/hooks" <<'PY' || warn "could not write the handoff manifest"
+import hashlib, json, os, sys, datetime
+src, dst = sys.argv[1:3]
+files = {}
+for n in sorted(os.listdir(src)):
+    f = os.path.join(dst, n)
+    if os.path.isfile(os.path.join(src, n)) and os.path.isfile(f) and n != ".DS_Store":
+        files[n] = hashlib.sha256(open(f, "rb").read()).hexdigest()
+mp = os.path.join(dst, ".handoff-manifest.json")
+try:
+    if json.load(open(mp)).get("files") == files:
+        sys.exit(0)
+except Exception:
+    pass
+ver = ""
+try:
+    import re
+    ver = re.search(r'(?m)^HOOK_VERSION = "([^"]*)"', open(os.path.join(dst, "precompact-handoff.py")).read()).group(1)
+except Exception:
+    pass
+tmp = mp + ".tmp"
+json.dump({"version": ver, "installed_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+           "files": files}, open(tmp, "w"), indent=1)
+os.replace(tmp, mp)
+PY
+    act "manifest   .claude/hooks/.handoff-manifest.json"
+  fi
+fi
+say "  Restart open Claude Code sessions: hooks load when a session starts."
+
 say; say "== 5. ~/.agents skills"
 if [ -d "$EFF/agents" ]; then
   act "rsync agents/skills/ -> .agents/skills/  ($(ls "$EFF/agents/skills" | wc -l | tr -d ' ') unlocked skills; existing differing files backed up)"
