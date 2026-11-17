@@ -6,7 +6,13 @@ All notable changes are recorded here. The format follows [Keep a Changelog](htt
 
 ### Added
 
+- Handoff hooks 1.10.0 (F46, subagent isolation). A compacting subagent (hook input with `agent_id`) now gets its own handoff built from its own transcript (`<dirname(transcript_path)>/<session>/subagents/agent-<id>.jsonl`) and stored under `<sid>-a-<agent_id>` files, with its own pending marker, agent note, health row (`agent_id`, `agent_type`) and recovery (`HANDOFF RECOVERED`). It never reads or writes the main session's handoff, never merges the decisions ledger and never starts the indexer; a missing subagent transcript is logged as `degraded` / `agent_transcript_missing`. `--reconcile` also counts subagent compactions (`subagent compactions <n> · missed <m>`). `postcompact-inject.py --check` accepts hooks from user or managed settings (`HANDOFF_MANAGED_SETTINGS_PATH` overrides the system path). `setup/bootstrap.sh --managed-hooks` writes a managed-settings file with the handoff hooks and prints the `sudo install` command; it never runs sudo.
+- Compact plugin 1.5.0 (F46 f): documented that subagents are never nudged.
 - Handoff hooks 1.9.0 (F45, no silent misses). PreCompact writes `<sid>-pending.json` first and a deterministic handoff before the first model call, so a hook killed at its timeout still leaves a handoff; the health line removes the pending file. If a compaction still has no handoff, the SessionStart `compact` hook rebuilds one from the transcript (`precompact-handoff.py --recover`, no model call, 6 s deadline) and says `HANDOFF RECOVERED`. `precompact-handoff.py --reconcile [--days N]` counts `compact_boundary` records against `health.jsonl` (canary sessions excluded) and writes `reconcile.json`; a daily 03:15 launchd job (`launchd/handoff-reconcile.plist.tmpl`) runs it. `postcompact-inject.py --check` runs at SessionStart `startup` and `resume` and prints one `HANDOFF CHECK:` line when the PreCompact or SessionStart `compact` hook is not wired, a hook file is missing or changed since install, the two hooks' versions differ, or reconcile found compactions without a handoff. `setup/bootstrap.sh` writes `~/.claude/hooks/.handoff-manifest.json` and reminds you to restart open sessions.
+
+### Fixed
+
+- The early deterministic write no longer logs its own error line when `build()` fails: one `hooks-error.jsonl` line per failed run again.
 
 ## [1.6.0] - 2026-11-14
 
