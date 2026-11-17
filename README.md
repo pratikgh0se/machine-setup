@@ -11,7 +11,7 @@ This repository is called `machine-setup`. The plugin marketplace inside it is c
 ## Why
 
 - **See what your agents are doing.** Subagents, plan progress, git state, test results, rate limits and the prompt cache are visible while you work, not buried in logs.
-- **Keep long sessions cheap and safe across compaction.** A 400k auto-compact window keeps turns cheaper. A handoff file means the model keeps its goal, decisions and next step when the context is compacted.
+- **Keep long sessions cheap and safe across compaction.** A 400k auto-compact window keeps turns cheaper. The handoff system (see [Handoff system](#handoff-system)) keeps the goal, decisions and next step when the context is compacted.
 - **Rebuild your setup on a new Mac in one command.** `setup/bootstrap.sh` installs hooks, settings, plugins and scheduled jobs from this repo plus your private overlay.
 
 ## The plugins
@@ -106,8 +106,8 @@ Details: [`plugins/compact`](plugins/compact/README.md)
 ## Beyond the plugins
 
 - **Token-budget loop** ([`tools/token-budget`](tools/token-budget/README.md)): a weekly launchd job that measures Claude Code's always-loaded token overhead, reports regressions and spend, and proposes reversible fixes that only you apply.
-- **Handoff hooks** ([`claude/hooks`](claude/settings.template.md)): a `PreCompact` hook that writes a deterministic handoff file and a `SessionStart` hook that re-injects it after compaction, plus guard hooks that block `git stash` and recursive scans from `/` or your home folder. Specified in [`specs/handoff-hooks-spec.md`](specs/handoff-hooks-spec.md). Missed compactions are recovered and counted nightly, subagents get their own handoff, and each handoff leaves a receipt that is checked: see [`docs/handoff-reliability.md`](docs/handoff-reliability.md).
-- **Handoff canary** ([`tools/handoff-canary`](tools/handoff-canary/README.md)): a nightly job that proves compaction plus handoff still works end to end.
+- **Guard hooks** ([`claude/hooks`](claude/settings.template.md)): hooks that block `git stash` and recursive scans from `/` or your home folder.
+- **Handoff system**: moved to [lossless-handoff](https://github.com/pratikgh0se/lossless-handoff). See [Handoff system](#handoff-system).
 - **Settings and CLAUDE.md templates** ([`claude/settings.template.md`](claude/settings.template.md)): a documented starting point for `~/.claude/settings.json` and a delegation-policy `CLAUDE.md`.
 - **Machine bootstrap** (`setup/`, `launchd/`): scripts that check prerequisites, install this setup, install launchd jobs and scan for secrets before export. See [`setup/README.md`](setup/README.md).
 
@@ -140,23 +140,15 @@ Bootstrap installs hooks, a merged `settings.json`, `CLAUDE.md`, plugins and, wi
 - Per feature: `git` (safety, dev), `gh` signed in (dev PR Radar), `lsof` and `afplay` on macOS (dev Port Watch, awareness chime), `ccusage` (optional, status line and token-budget spend figures).
 - The token-budget job, launchd templates and `setup/` scripts are macOS only. Full list: [`PREREQS.md`](PREREQS.md).
 
-## How handoff works
+## Handoff system
 
-Bento runs Claude Code with a 400k auto-compact window instead of 1M. Turns are cheaper, the weekly limit lasts longer and quality holds up better, at the cost of more compactions. To make compaction safe, the `compact` plugin asks the model to write its own handoff file at 75% of the window (300k), and again every 50k tokens. The file has six headings: Goal, Decisions and why, Done, In progress, Dead ends, Exact next step. Claude Code compacts at about the window minus a ~33k buffer (about 367k), so the nudge lands with margin. A `PreCompact` hook then builds a deterministic handoff around the agent file, a `SessionStart` hook injects it after compaction (up to three parts, plus the project decisions ledger), and every compaction appends a line to `health.jsonl`. On every compaction the hook also asks Sonnet for a fresh summary of the recent conversation and adds it to the handoff (about $0.05 to $0.10 and 15 to 30 seconds per compaction); set `HANDOFF_SUMMARY=0` to turn it off, `HANDOFF_SUMMARY_MODEL` to change the model (default `sonnet`) or `HANDOFF_SUMMARY_TIMEOUT` to change the timeout in seconds (default 75). A per-project decisions ledger (keyed by git root, merged by Sonnet at each compaction, never deleting, only superseding) is injected in its own two parts and outranks the fresh summary, which outranks the agent note; set `HANDOFF_LEDGER=0` to turn it off or `HANDOFF_LEDGER_MODEL` to change its model. This costs two more Sonnet calls per compaction (about $0.10 to $0.20 and 20 to 40 seconds). A broken handoff is loud (toast, band chip and a warning to the model); a merely reduced one is only logged. A nightly canary checks the whole chain. Headless runs (`claude -p`, the Agent SDK) load user hooks only when user settings are loaded (`--setting-sources user`, or `settingSources: ["user"]` in the SDK); without that no handoff is written, and `precompact-handoff.py --reconcile` counts those compactions separately as headless. If a compaction ever has no handoff, the hook rebuilds one from the transcript and `--reconcile` (daily with `--launchd`) reports every miss. Headless jobs keep the hooks unless they start with `--bare`, `disableAllHooks`, `--setting-sources` without `user`, or SDK `settingSources: []`. To keep them in every case, run `setup/bootstrap.sh --managed-hooks`: it writes `~/.local/state/machine-setup/managed-settings.json` (your existing system file plus the handoff hooks) and prints the one `sudo install` command for you to run; the script never runs sudo. With managed hooks only `--bare` can skip them. A subagent that compacts gets its own handoff (`<sid>-a-<agent_id>` files), never the main session's.
+The handoff system moved to [lossless-handoff](https://github.com/pratikgh0se/lossless-handoff). It holds the `PreCompact` and `SessionStart` hooks, the recall index, the nightly canary and the reliability docs. This repo no longer ships a copy.
 
-What to expect: in a blind quiz after compaction (scores out of 100), the compaction summary alone scored 62.
+To install it, run `setup/bootstrap.sh --handoff`. This optional step clones or updates lossless-handoff in `~/CodeBase/lossless-handoff`. Then it runs `./install.sh --no-nudge --canary`. The `--no-nudge` flag is used because the `compact` plugin already nudges the model. The step is safe to run again.
 
-Adding the agent handoff file raised it to 68.
+This repo keeps the 400k auto-compact window (`CLAUDE_CODE_AUTO_COMPACT_WINDOW=400000`) and the `compact` plugin.
 
-Adding the fresh Sonnet summary raised it to 75 to 76.
-
-In a separate quiz on old decisions (out of 100), the decisions ledger raised the score from 13.5 to 56.2, against a ceiling of 61.1.
-
-Perfect recent memory, the ceiling, scored 85.
-
-![Timeline from 0 to 400k tokens: nudge at 300k, re-nudge at 350k, compaction at about 367k, handoff injected](docs/img/handoff-timeline.svg)
-
-Why this design: [ADR 0001](docs/adr/0001-compact-window-400k-with-handoff.md). Full sequence: [ARCHITECTURE.md](ARCHITECTURE.md#handoff-lifecycle).
+Why this window size: [ADR 0001](docs/adr/0001-compact-window-400k-with-handoff.md).
 
 ## Public and private overlay
 
@@ -178,10 +170,9 @@ CI in this repo ([`.github/workflows/leak-scan.yml`](.github/workflows/leak-scan
 
 | Where | What |
 |---|---|
-| [`ARCHITECTURE.md`](ARCHITECTURE.md) | Components, state locations, handoff lifecycle, testing and delegation models, with diagrams |
+| [`ARCHITECTURE.md`](ARCHITECTURE.md) | Components, state locations, testing and delegation models, with diagrams |
 | [`docs/adr/`](docs/adr/README.md) | Architecture decision records |
-| [`docs/handoff-reliability.md`](docs/handoff-reliability.md) | Missed compactions, subagents, headless runs, proof receipts, claims register |
-| [`specs/`](specs/) | Behaviour contracts, one per plugin plus setup and handoff hooks. Where a plugin README and its spec disagree, the code and `plugin.json` are the truth. |
+| [`specs/`](specs/) | Behaviour contracts, one per plugin plus setup. Where a plugin README and its spec disagree, the code and `plugin.json` are the truth. |
 | [`OVERLAY.md`](OVERLAY.md) | What stays in the private overlay and why |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Process and the checks you can run |
 | [`CHANGELOG.md`](CHANGELOG.md) | Release notes |

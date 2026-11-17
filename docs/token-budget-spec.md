@@ -444,7 +444,7 @@ Schedule
 2. `ccusage weekly` week boundary may differ from the ISO `week` id; the ledger stores its value as-is. Confirm acceptable.
 
 ## Handoff health (2026-10-16)
-Draft for approval. Why: compaction plus handoff is what long jobs depend on; the weekly report is the one place the user already reads, so a DEGRADED handoff rate or a failing nightly canary must show up there (specs/handoff-hooks-spec.md "F36 Handoff reliability" defines the log and the canary). Amends 4.1.3 (ledger line), 4.2 (inputs, rule table), 4.3 (report structure) and 9 (ACs 57+).
+Draft for approval. Why: compaction plus handoff is what long jobs depend on; the weekly report is the one place the user already reads, so a DEGRADED handoff rate or a failing nightly canary must show up there (the handoff hooks spec in lossless-handoff "F36 Handoff reliability" defines the log and the canary). Amends 4.1.3 (ledger line), 4.2 (inputs, rule table), 4.3 (report structure) and 9 (ACs 57+).
 
 ### H.1 Input and ledger
 `analyze.py` gains an optional input `--handoff-health <path>` (default `$HOME/.local/state/claude-handoffs/health.jsonl`; test override env `HANDOFF_HEALTH_FILE`). The file is JSONL (hook spec F36.B): compaction lines (have `agent_file`) and canary lines (`trigger: "canary"`). Lines that fail to parse, lack `ts`, or have `canary_child` true are ignored (counted in `ignored`). Window = the same 7 days as `spend_breakdown` (`ts` >= now - 7 days, UTC). Missing or unreadable file: `handoff_health` is `null`, `warnings` gains `"handoff-health"`, exit stays 0. The ledger line gains an optional key `handoff_health` (absent in old lines; readers tolerate absence; `schema` stays 1):
