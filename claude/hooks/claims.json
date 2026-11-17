@@ -1,0 +1,12 @@
+{
+  "claims": [
+    {"id": "C1", "text": "Sampled messages from before a compaction are still retrievable word for word", "source": "proof:lossless", "window_days": 30, "refresh_days": 2, "min_rate": 1.0},
+    {"id": "C2", "text": "Every interactive compaction gets a handoff", "source": "reconcile:coverage", "window_days": 30, "refresh_days": 2, "min_rate": 0.99},
+    {"id": "C3", "text": "A subagent gets only its own context, never the main session's", "source": "proof:right_agent", "window_days": 30, "refresh_days": 2, "min_rate": 1.0},
+    {"id": "C4", "text": "The handoff reaches the model after compaction", "source": "proof:delivered", "window_days": 30, "refresh_days": 2, "min_rate": 0.99},
+    {"id": "C5", "text": "Recorded project decisions are never lost by a ledger update", "source": "proof:decisions_safe", "window_days": 30, "refresh_days": 2, "min_rate": 1.0},
+    {"id": "C6", "text": "Subagent compactions are covered too", "source": "reconcile:subagent_coverage", "window_days": 30, "refresh_days": 2, "min_rate": 0.99},
+    {"id": "C7", "text": "A blind quiz after compaction scored 98% with the handoff against 62% with the compaction summary alone", "source": "static", "refresh_days": 30, "evidence": {"date": "2026-11-14", "value": "62% to 98%", "how": "blind quiz of the same sessions with and without the handoff, scored out of 100"}},
+    {"id": "C8", "text": "About 19% lower cost at a 400k window than at 1M (one-off measurement)", "source": "static", "refresh_days": 365, "evidence": {"date": "2026-10-20", "value": "about 19% lower", "how": "one-off cost comparison of 400k and 1M auto-compact windows"}}
+  ]
+}

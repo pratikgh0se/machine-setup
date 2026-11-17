@@ -1,6 +1,6 @@
 # compact
 
-Compact at the right moment and keep the thread across it. Version 1.4.0. Mods: a cost-aware Compact Coach, a two-step `/handoff`, a Resume loader, a Handoff nudge, a Handoff alert and an optional Orchestrator mode. Spends no tokens except the model-visible pieces listed under Context cost.
+Compact at the right moment and keep the thread across it. Version 1.5.0. Mods: a cost-aware Compact Coach, a two-step `/handoff`, a Resume loader, a Handoff nudge, a Handoff alert and an optional Orchestrator mode. Spends no tokens except the model-visible pieces listed under Context cost.
 
 ## Install
 
@@ -129,4 +129,5 @@ The plugin writes only: the handoff files you ask for and the six-heading agent 
 - **Command names.** Each command registers under its bare name. If Claude Code or another plugin already owns the name, it registers as `compact-<name>` instead.
 - **Terminal and desktop.** Every band text has an equivalent for terminal sessions (plain text and a few emoji glyphs) and for the desktop app (an SVG). Toasts carry text only; when a desktop surface is attached they omit emoji.
 - **Estimates.** Any dollar figure is an estimate from a built-in price table with a date; it is labelled as such and can be replaced with `pricesJson` where that option exists.
+- **Subagents.** The Handoff nudge is for the main loop only: tool calls, prompts and measures that carry an `agentId` never arm, receive or consume a nudge, so a subagent is never told to write the main `<sid>-agent.md` (F46 f). The API exposes the id on every event but not a per-subagent context size, so subagents are not nudged at all.
 - **Checking the install.** `claude plugin validate plugins/compact` (from a clone of this repo) must report no errors. Spec (normative, more detail): [specs/compact.md](../../specs/compact.md), shared rules in [specs/00-conventions.md](../../specs/00-conventions.md).

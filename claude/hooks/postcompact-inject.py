@@ -36,6 +36,14 @@ def age_ok(ts):
         return False
 
 
+def age_ok_s(ts, seconds):
+    try:
+        t = datetime.datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc)
+        return (time.time() - t.timestamp()) <= seconds
+    except Exception:
+        return False
+
+
 def warning_text(codes, errors):
     parts = []
     for c in CODE_ORDER:
@@ -69,7 +77,7 @@ HARD_MAX = 9900    # each part's total output (warning + header + content + cont
 INLINE_MAX = 9700  # content target per part
 NAMES_MAX = 150    # the section-name list in a continuation line is cut to this many chars
 MAX_PARTS = 3      # F37.6
-HOOK_VERSION = "1.8.0"
+HOOK_VERSION = "1.10.0"
 _SID = ["unknown"]
 
 
@@ -335,6 +343,277 @@ def ledger_mode(lpart=1):
         emit(parts[lpart - 1])
 
 
+RECOVER_CODES = ("handoff_missing", "no_health", "handoff_old")
+RECOVERED_FIRST = ("HANDOFF RECOVERED: the pre-compaction hook did not run for this compaction; this handoff was "
+                   "rebuilt from the transcript without a model summary. Use recall for detail.\n")
+
+
+def precompact_script():
+    for q in (os.path.join(os.path.dirname(os.path.abspath(__file__)), "precompact-handoff.py"),
+              os.path.join(os.path.expanduser("~"), ".claude", "hooks", "precompact-handoff.py")):
+        if os.path.isfile(q):
+            return q
+    return None
+
+
+def fit_recovered(txt):
+    """RECOVERED_FIRST + PREFIX + txt under HARD_MAX: drop whole sections other than the user's words from the end,
+    then the oldest user lines (the newest are kept), then cut."""
+    def total(t):
+        return len(RECOVERED_FIRST) + len(PREFIX) + len(t)
+    if total(txt) <= HARD_MAX:
+        return txt
+    first = re.search(r"(?m)^## ", txt)
+    head = txt[:first.start()] if first else txt
+    secs = [x for x in re.split(r"(?m)^(?=## )", txt[len(head):]) if x]
+
+    def join():
+        return head + "".join(secs)
+    while total(join()) > HARD_MAX:
+        idx = [i for i, x in enumerate(secs) if not x.startswith("## Last user messages")]
+        if not idx:
+            break
+        del secs[idx[-1]]
+    while total(join()) > HARD_MAX:
+        ui = [i for i, x in enumerate(secs) if x.startswith("## Last user messages")]
+        if not ui:
+            break
+        lines = secs[ui[0]].split("\n")
+        body = [i for i, ln in enumerate(lines) if ln.startswith("- ")]
+        if len(body) <= 1:
+            break
+        del lines[body[0]]
+        secs[ui[0]] = "\n".join(lines)
+    out = join()
+    return out if total(out) <= HARD_MAX else out[: max(HARD_MAX - len(RECOVERED_FIRST) - len(PREFIX) - 1, 0)]
+
+
+def write_json_atomic(path, obj):
+    tmp = f"{path}.tmp{os.getpid()}"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(obj, f)
+    os.replace(tmp, path)
+
+
+def last_boundary_ts(path):
+    """`timestamp` of the last compact_boundary record, read from the tail of the file (None if none)."""
+    size = os.path.getsize(path)
+    pos, buf = size, b""
+    with open(path, "rb") as f:
+        while pos > 0 and size - pos < 16 * 1024 * 1024:
+            step = min(1 << 18, pos)
+            pos -= step
+            f.seek(pos)
+            buf = f.read(step) + buf
+            lines = buf.split(b"\n")
+            for ln in reversed(lines[1:] if pos > 0 else lines):
+                if b"compact_boundary" in ln:
+                    try:
+                        o = json.loads(ln)
+                    except Exception:
+                        continue
+                    if isinstance(o, dict) and (o.get("subtype") == "compact_boundary" or o.get("type") == "compact_boundary"):
+                        return o.get("timestamp") if isinstance(o.get("timestamp"), str) else None
+    return None
+
+
+def write_receipt(d, key, kind, text):
+    """F47.a: append one line to <state>/receipts.jsonl for a handoff part 1 emitted. Never raises, never changes output."""
+    try:
+        import hashlib
+        aid = d.get("agent_id")
+        aid = aid.strip() if isinstance(aid, str) and aid.strip() else None
+        psid = str(d.get("session_id") or "unknown").replace("/", "_")
+        tp = d.get("transcript_path") if isinstance(d.get("transcript_path"), str) else ""
+        if aid and tp and "/subagents/" not in tp:
+            tp = os.path.join(os.path.dirname(tp), str(d.get("session_id")), "subagents", f"agent-{aid}.jsonl")
+        try:
+            bts = last_boundary_ts(tp) if tp else None
+        except Exception:
+            bts = None
+        with open(os.path.join(HANDOFFS_DIR, f"{key}-latest.md"), "rb") as f:
+            hsha = hashlib.sha256(f.read()).hexdigest()
+        row = {"ts": utc_now(), "sid": psid[:8], "agent_id": aid, "key": key, "transcript": tp, "boundary_ts": bts,
+               "kind": kind, "handoff_sha256": hsha, "part1_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+               "part1_head": text[:300]}
+        with open(os.path.join(HANDOFFS_DIR, "receipts.jsonl"), "a", encoding="utf-8") as f:
+            f.write(json.dumps(row) + "\n")
+    except BaseException as e:
+        if not isinstance(e, KeyboardInterrupt):
+            log_error(e)
+
+
+def try_recover(d, sid):
+    """F45.b: run `precompact-handoff.py --recover` with the same hook JSON (deadline 6 s). Returns the text to emit, or
+    None after logging to hooks-error.jsonl (the caller then falls back to the DEGRADED text)."""
+    try:
+        import subprocess
+        script = precompact_script()
+        if not script:
+            raise RuntimeError("precompact-handoff.py not found for recovery")
+        r = subprocess.run([sys.executable, script, "--recover"], input=json.dumps(d), capture_output=True, text=True,
+                           timeout=6)
+        res = None
+        for ln in reversed((r.stdout or "").splitlines()):
+            try:
+                res = json.loads(ln)
+                break
+            except Exception:
+                continue
+        if not isinstance(res, dict) or res.get("ok") is not True:
+            raise RuntimeError("recovery failed: " + str((res or {}).get("error") or f"exit {r.returncode}")[:200])
+        with open(os.path.join(HANDOFFS_DIR, f"{sid}-latest.md"), encoding="utf-8", errors="replace") as f:
+            txt = f.read().strip()
+        if not txt:
+            raise RuntimeError("recovery wrote an empty handoff")
+        return RECOVERED_FIRST + PREFIX + fit_recovered(txt)
+    except BaseException as e:
+        if isinstance(e, KeyboardInterrupt):
+            raise
+        log_error(e)
+        return None
+
+
+def _vers(path):
+    try:
+        m = re.search(r'(?m)^HOOK_VERSION = "([^"]*)"', open(path, encoding="utf-8", errors="replace").read())
+        return m.group(1) if m else None
+    except Exception:
+        return None
+
+
+def check_mode():
+    """F45.d: one line `HANDOFF CHECK: ...` when the install is wrong, nothing when it is fine."""
+    import hashlib
+    home = os.path.expanduser("~")
+    hooks_dir = os.path.join(home, ".claude", "hooks")
+    problems = []
+    try:
+        with open(os.path.join(home, ".claude", "settings.json"), encoding="utf-8") as f:
+            st = json.load(f)
+        if not isinstance(st, dict):
+            raise ValueError("not an object")
+    except Exception:
+        st = None
+        problems.append("settings.json unreadable")
+    managed = None  # F46.g: managed settings (system level) count as well as user settings
+    try:
+        mpath = (os.environ.get("HANDOFF_MANAGED_SETTINGS_PATH") or "").strip() or (
+            "/Library/Application Support/ClaudeCode/managed-settings.json" if sys.platform == "darwin"
+            else "/etc/claude-code/managed-settings.json")
+        if os.path.isfile(mpath):
+            with open(mpath, encoding="utf-8") as f:
+                managed = json.load(f)
+            if not isinstance(managed, dict):
+                managed = None
+    except Exception:
+        managed = None
+    if st is None and managed is not None and not os.path.exists(os.path.join(home, ".claude", "settings.json")):
+        problems.clear()  # no user settings file at all, but the managed file is there: not a problem
+
+    def runs(event, script, need_compact):
+        for src in (st, managed):
+            try:
+                for g in (src.get("hooks") or {}).get(event) or []:
+                    if need_compact and "compact" not in str(g.get("matcher") or ""):
+                        continue
+                    for h in g.get("hooks") or []:
+                        if script in str(h.get("command") or ""):
+                            return True
+            except Exception:
+                pass
+        return False
+    if st is not None or managed is not None:
+        if not runs("PreCompact", "precompact-handoff.py", False):
+            problems.append("no PreCompact hook runs precompact-handoff.py")
+        if not runs("SessionStart", "postcompact-inject.py", True):
+            problems.append("no SessionStart compact hook runs postcompact-inject.py")
+    pre, post = os.path.join(hooks_dir, "precompact-handoff.py"), os.path.join(hooks_dir, "postcompact-inject.py")
+    for fp in (pre, post):
+        if not os.path.isfile(fp):
+            problems.append(f"hook file missing: {os.path.basename(fp)}")
+    if os.path.isfile(pre) and os.path.isfile(post):
+        a, b = _vers(pre), _vers(post)
+        if a != b:
+            problems.append(f"version mismatch (precompact-handoff.py {a}, postcompact-inject.py {b})")
+    try:
+        mp = os.path.join(hooks_dir, ".handoff-manifest.json")
+        if os.path.isfile(mp):
+            with open(mp, encoding="utf-8") as f:
+                files = (json.load(f) or {}).get("files") or {}
+            for name, want in sorted(files.items()):
+                fp = os.path.join(hooks_dir, name)
+                if not os.path.isfile(fp):
+                    if not any(name in x for x in problems):
+                        problems.append(f"hook file missing: {name}")
+                    continue
+                with open(fp, "rb") as f:
+                    if hashlib.sha256(f.read()).hexdigest() != want:
+                        problems.append(f"{name} differs from the installed manifest")
+    except Exception as e:
+        log_error(e)
+    rp = os.path.join(HANDOFFS_DIR, "reconcile.json")
+    try:
+        rj = read_json(rp)
+        if rj:
+            mi, kl = rj.get("missed_interactive") or 0, rj.get("killed") or 0
+            if (mi > 0 or kl > 0) and str(rj.get("ts") or "") > str(rj.get("noticed_ts") or ""):
+                problems.append(f"{mi if mi > 0 else kl} compactions without a handoff in the last "
+                                f"{rj.get('days', 7)} days; see precompact-handoff.py --reconcile")
+                rj["noticed_ts"] = utc_now()
+                tmp = f"{rp}.tmp{os.getpid()}"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump(rj, f)
+                os.replace(tmp, rp)
+    except Exception as e:
+        log_error(e)
+    try:  # F47.c: a proof run with failures, shown once
+        prows = []
+        with open(os.path.join(HANDOFFS_DIR, "proofs.jsonl"), encoding="utf-8", errors="replace") as f:
+            for ln in f:
+                try:
+                    o = json.loads(ln)
+                except Exception:
+                    continue
+                if isinstance(o, dict) and isinstance(o.get("ts"), str):
+                    prows.append(o)
+        if prows:
+            newest = max(r["ts"] for r in prows)
+            pnp = os.path.join(HANDOFFS_DIR, "proof-notice.json")
+            pn = read_json(pnp) or {}
+            if newest > str(pn.get("noticed_ts") or ""):
+                nf = sum(1 for r in prows if r["ts"] == newest for v in (r.get("checks") or {}).values() if v == "fail")
+                if nf > 0:
+                    problems.append(f"proof failed: {nf} checks; see proof-report.md")
+                write_json_atomic(pnp, {"noticed_ts": newest})
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        log_error(e)
+    try:  # F48.d: failing or stale claims, shown once per change of the set
+        cs = read_json(os.path.join(HANDOFFS_DIR, "claims-status.json"))
+        if cs:
+            bad = sorted(c.get("id") for c in (cs.get("claims") or []) if isinstance(c, dict) and c.get("status") in ("fail", "stale"))
+            cnp = os.path.join(HANDOFFS_DIR, "claims-notice.json")
+            cn = read_json(cnp) or {}
+            if bad != (cn.get("set") if isinstance(cn.get("set"), list) else []):
+                if bad:
+                    problems.append(f"claims: {len(bad)} failing or stale; see claims-report.md")
+                write_json_atomic(cnp, {"set": bad})
+    except Exception as e:
+        log_error(e)
+    if problems:
+        sys.stdout.write("HANDOFF CHECK: " + "; ".join(problems) + ". Run the installer again, then restart Claude Code.\n")
+
+
+if "--check" in sys.argv[1:]:
+    try:
+        check_mode()
+    except BaseException as _e:
+        if not isinstance(_e, (SystemExit, KeyboardInterrupt)):
+            log_error(_e)
+    sys.exit(0)
+
 if "--ledger" in sys.argv[1:]:
     if os.environ.get("HANDOFF_LEDGER") == "0":  # AC 100: ledger disabled, print nothing
         sys.exit(0)
@@ -348,6 +627,9 @@ try:
     d = json.load(sys.stdin)
     sid = d.get("session_id")
     sid = sid.replace("/", "_") if isinstance(sid, str) else ""  # same rule as precompact-handoff.py; non-string = silent
+    _aid = d.get("agent_id")
+    if sid and isinstance(_aid, str) and _aid.strip():  # F46.c: a subagent reads and writes only its own <sid>-a-<id> files
+        sid = f"{sid}-a-{_aid.strip().replace('/', '_')}"
     _SID[0] = sid or "unknown"
     if sid:
         p = os.path.join(HANDOFFS_DIR, f"{sid}-latest.md")
@@ -362,9 +644,19 @@ try:
         try:
             S = read_json(os.path.join(HANDOFFS_DIR, f"{sid}-last-health.json"))
             trig = S.get("trigger") if S else "unknown"
-            if not txt:
-                if PART == 2:
+            # F45.b: parts run in parallel, so parts 2 and 3 decide from the state at their start
+            if S and S.get("trigger") == "recovered" and age_ok_s(S.get("ts"), 60) and PART in (2, 3):
+                raise SystemExit(0)
+            need = not txt or S is None or not isinstance(S.get("ts"), str) or not age_ok(S["ts"])
+            if need and PART in (2, 3):
+                raise SystemExit(0)
+            if need:
+                rec = try_recover(d, sid)
+                if rec is not None:
+                    emit(rec)
+                    write_receipt(d, sid, "recovered", rec)
                     raise SystemExit(0)
+            if not txt:
                 write_degraded(sid, ["handoff_missing"], trig)
                 emit("HANDOFF DEGRADED: no handoff file for this session. "
                      "Read the transcript (see session metadata) before acting.")
@@ -387,6 +679,8 @@ try:
                 outs = render(first, txt, os.path.abspath(p))
                 if len(outs) >= PART:
                     emit(outs[PART - 1])
+                    if PART == 1:
+                        write_receipt(d, sid, "normal", outs[0])
         except SystemExit:
             raise
         except BaseException:
