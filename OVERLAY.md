@@ -18,7 +18,7 @@ This repo is the public, generic part. Everything below stays in a private overl
 | `claude/CLAUDE.md` | Personal global instructions (notes-vault section, names). Public replacement: `claude/CLAUDE.md.template`. |
 | `claude/plugins.json` | Exact marketplace and plugin list with personal identifiers. |
 | `claude/placeholders.txt`, `claude/hook-deps.tsv`, `claude/commands.links.tsv`, `claude/skills.links.tsv` | Generated link and dependency maps containing personal paths. |
-| Project-specific hooks | The four generic hooks (`precompact-handoff.py`, `postcompact-inject.py`, `no-git-stash.sh`, `no-root-walks.py`) are public, with project-specific wording removed. |
+| Project-specific hooks | The generic hooks (`no-git-stash.sh`, `no-root-walks.py`) are public, with project-specific wording removed. |
 | `claude/skills/<private-project>-progress/` | Progress-board skill for a private project (SKILL.md, two HTML pages, two JSON files, render.py). |
 | `launchd/<owner-prefix>.*.plist`, `launchd/deps.tsv`, `launchd/links.tsv` | All personal jobs: the private-project jobs (backup, cleanup, deps-sync, fork-sync, heal, ledger-reconcile, obs-inventory, obs-probe, quality-nightly, restore-verify, two ticks), the notes-vault jobs (agent-review, architect, close, health, inbox, morning, nightly, report, retrieval-eval, security, sprint-plan, sprint-sync, weekly), `ollama-serve`, and the personal copies of `token-budget` and `machine-setup-autosync`. Public replacements: `launchd/*.plist.tmpl`. |
 | `.secret-scan-allow` personal entries | The public file keeps only the spec placeholder entry. |

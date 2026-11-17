@@ -3,15 +3,15 @@
 # Idempotent and safe to re-run (loaded jobs with identical plists, and installed plugins, are skipped). Backs up any file it would overwrite to ~/.machine-setup-backup/<ts>/.
 #   ./bootstrap.sh --dry-run      show what would happen, change nothing
 #   ./bootstrap.sh                install
-# Flags: --no-repos  --all-repos (also clone big optional upstream repos)  --launchd (install launchd jobs)  --no-plugins  --managed-hooks (standalone: only write a managed-settings.json with the handoff hooks and print the sudo command; never runs sudo)
+# Flags: --no-repos  --all-repos (also clone big optional upstream repos)  --launchd (install launchd jobs)  --no-plugins  --handoff (install the handoff system from lossless-handoff)
 # Overlay: MACHINE_SETUP_PRIVATE=<dir> (else ../machine-setup-private; "none" disables). See OVERLAY.md.
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"   # setup/
 REPO="$(cd "$ROOT/.." && pwd)"           # public repo root (claude/, launchd/, ...)
-DRY=0; REPOS=1; ALLREPOS=0; LAUNCHD=0; PLUGINS=1; MANAGED=0
+DRY=0; REPOS=1; ALLREPOS=0; LAUNCHD=0; PLUGINS=1; HANDOFF=0
 for a in "$@"; do case "$a" in
   --dry-run|-n) DRY=1;; --no-repos) REPOS=0;; --all-repos) ALLREPOS=1;;
-  --launchd) LAUNCHD=1;; --no-plugins) PLUGINS=0;; --managed-hooks) MANAGED=1;;
+  --launchd) LAUNCHD=1;; --no-plugins) PLUGINS=0;; --handoff) HANDOFF=1;;
   -h|--help) sed -n '2,7p' "$0"; exit 0;; *) echo "unknown flag: $a" >&2; exit 2;; esac; done
 
 # shellcheck source=lib/overlay.sh
@@ -119,58 +119,6 @@ if [ -d "$REPO/agents" ] || [ -d "$OVAG" ]; then
 fi
 OREPOS=""; [ -n "$OVERLAY" ] && [ -f "$OVERLAY/repos.tsv" ] && OREPOS="$OVERLAY/repos.tsv"
 
-# F46.g: handoff hooks in the system-level managed settings, so headless runs and --setting-sources without `user` keep them.
-# Standalone mode: does only this and exits (no repos, plugins, brew, network or other steps). Writes <state>/machine-setup/managed-settings.json and PRINTS the one sudo command; this script never runs sudo.
-if [ $MANAGED -eq 1 ]; then
-  say; say "== 4b. managed hooks (--managed-hooks)"
-  MS_OUT="$H/.local/state/machine-setup/managed-settings.json"
-  case "$(uname -s)" in Darwin) MS_SYS="/Library/Application Support/ClaudeCode/managed-settings.json";; *) MS_SYS="/etc/claude-code/managed-settings.json";; esac
-  [ -n "${HANDOFF_MANAGED_SETTINGS_PATH:-}" ] && MS_SYS="$HANDOFF_MANAGED_SETTINGS_PATH"
-  render_to "$TPL_SET" "$TMP/settings.rendered.json"  # the handoff entries come from the template, never from an overlay that may be out of date
-  if [ $DRY -eq 1 ]; then act "write      ${MS_OUT#$H/}  (existing system file read-only: $MS_SYS)"
-  else
-    mkdir -p "$(dirname "$MS_OUT")"
-    if python3 - "$TMP/settings.rendered.json" "$MS_SYS" "$MS_OUT" <<'PY'
-import json, os, sys
-tpl_path, sys_path, out_path = sys.argv[1:4]
-tpl = json.load(open(tpl_path))
-cur = {}
-if os.path.isfile(sys_path):
-    try:
-        cur = json.load(open(sys_path))
-        if not isinstance(cur, dict):
-            raise ValueError("not an object")
-    except Exception as e:
-        sys.stderr.write(f"cannot merge into {sys_path}: {e}\n")
-        sys.exit(1)
-WANT = {"PreCompact": None, "SessionStart": {"compact", "startup", "resume"}, "SessionEnd": None}
-HOOKS = ("precompact-handoff.py", "postcompact-inject.py", "recall.py")
-hooks = cur.setdefault("hooks", {})
-if not isinstance(hooks, dict):
-    sys.stderr.write("existing 'hooks' is not an object\n"); sys.exit(1)
-for ev, matchers in WANT.items():
-    groups = [g for g in (tpl.get("hooks") or {}).get(ev, [])
-              if (matchers is None or g.get("matcher") in matchers)
-              and any(any(n in (h.get("command") or "") for n in HOOKS) for h in g.get("hooks", []))]
-    have = hooks.setdefault(ev, [])
-    for g in groups:
-        if g not in have:
-            have.append(g)
-tmp = out_path + ".tmp"
-with open(tmp, "w") as f:
-    json.dump(cur, f, indent=2)
-    f.write("\n")
-os.replace(tmp, out_path)
-PY
-    then act "wrote      ${MS_OUT#$H/}"
-    else warn "managed-settings.json not written"; ERR=1; fi
-  fi
-  say "  To make the handoff hooks always load, run this yourself (needs admin rights; this script never runs sudo):"
-  say "sudo install -m 644 $MS_OUT \"$MS_SYS\""
-  say "  Only --bare skips managed hooks. Restart open Claude Code sessions afterwards."
-  exit $ERR
-fi
-
 say "machine-setup bootstrap  HOME=$H  $([ $DRY -eq 1 ] && echo '(DRY RUN)')"
 if [ -n "$OVERLAY" ]; then say "  overlay: $OVERLAY"; else say "  overlay: none (generic install)"; fi
 
@@ -180,7 +128,7 @@ for b in git python3 claude node npx gh ccusage jq rsync; do
 done
 
 say; say "== 2. runtime directories"
-DIRS=("$H/.local/state/claude-handoffs" "$C/hooks" "$C/skills" "$C/commands" "$H/.local/state/token-budget" "$H/.local/state/machine-setup" "$H/Library/LaunchAgents" "$H/.agents/skills")
+DIRS=("$C/hooks" "$C/skills" "$C/commands" "$H/.local/state/token-budget" "$H/.local/state/machine-setup" "$H/Library/LaunchAgents" "$H/.agents/skills")
 if [ -n "$OVERLAY" ] && [ -f "$OVERLAY/dirs.txt" ]; then
   while IFS= read -r d || [ -n "$d" ]; do
     d="${d%$'\r'}"; case "$d" in ''|'#'*) continue;; esac
@@ -240,39 +188,6 @@ while IFS=$'\t' read -r p kind; do
   esac
 done < "$EFF/claude/hook-deps.tsv"
 
-# F45.d: manifest of the hook files this run installed (sha256 of what is now in ~/.claude/hooks); the SessionStart
-# `postcompact-inject.py --check` compares it. Left untouched when the hashes are unchanged (idempotent).
-if [ -d "$EFF/claude/hooks" ]; then
-  if [ $DRY -eq 1 ]; then act "write      .claude/hooks/.handoff-manifest.json"
-  else
-    python3 - "$EFF/claude/hooks" "$C/hooks" <<'PY' || warn "could not write the handoff manifest"
-import hashlib, json, os, sys, datetime
-src, dst = sys.argv[1:3]
-files = {}
-for n in sorted(os.listdir(src)):
-    f = os.path.join(dst, n)
-    if os.path.isfile(os.path.join(src, n)) and os.path.isfile(f) and n != ".DS_Store":
-        files[n] = hashlib.sha256(open(f, "rb").read()).hexdigest()
-mp = os.path.join(dst, ".handoff-manifest.json")
-try:
-    if json.load(open(mp)).get("files") == files:
-        sys.exit(0)
-except Exception:
-    pass
-ver = ""
-try:
-    import re
-    ver = re.search(r'(?m)^HOOK_VERSION = "([^"]*)"', open(os.path.join(dst, "precompact-handoff.py")).read()).group(1)
-except Exception:
-    pass
-tmp = mp + ".tmp"
-json.dump({"version": ver, "installed_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-           "files": files}, open(tmp, "w"), indent=1)
-os.replace(tmp, mp)
-PY
-    act "manifest   .claude/hooks/.handoff-manifest.json"
-  fi
-fi
 say "  Restart open Claude Code sessions: hooks load when a session starts."
 
 say; say "== 5. ~/.agents skills"
@@ -408,6 +323,26 @@ PY
     fi
   done < "$TMP/jobs.tsv"
 else say "  skipped (pass --launchd to install launchd jobs)"; fi
+
+say; say "== 8. handoff system (optional, --handoff)"
+# The handoff system (PreCompact and SessionStart hooks, canary) lives in its own repo. Idempotent: clone once, then fast-forward.
+if [ $HANDOFF -eq 1 ]; then
+  LH="$H/CodeBase/lossless-handoff"
+  if [ -d "$LH/.git" ]; then
+    act "git -C ${LH#$H/} pull --ff-only"
+    [ $DRY -eq 0 ] && { git -C "$LH" pull --quiet --ff-only || warn "could not update lossless-handoff; installing the existing checkout"; }
+  else
+    act "git clone https://github.com/pratikgh0se/lossless-handoff ${LH#$H/}"
+    if [ $DRY -eq 0 ]; then
+      mkdir -p "$(dirname "$LH")"
+      git clone --quiet https://github.com/pratikgh0se/lossless-handoff "$LH" || { warn "clone failed: lossless-handoff"; ERR=1; }
+    fi
+  fi
+  act "${LH#$H/}/install.sh --no-nudge --canary   (the compact plugin already nudges)"
+  if [ $DRY -eq 0 ] && [ -x "$LH/install.sh" ]; then
+    ( cd "$LH" && ./install.sh --no-nudge --canary ) || { warn "lossless-handoff install failed"; ERR=1; }
+  fi
+else say "  skipped (pass --handoff to install the handoff system from lossless-handoff)"; fi
 
 say; say "== summary"
 if [ -s "$EFF/claude/placeholders.txt" ]; then say "  Secret placeholders to fill in ~/.claude/settings.json:"; sed 's/^/    __SECRET:/;s/$/__/' "$EFF/claude/placeholders.txt"

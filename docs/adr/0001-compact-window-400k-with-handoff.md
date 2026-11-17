@@ -18,7 +18,7 @@ Set `CLAUDE_CODE_AUTO_COMPACT_WINDOW=400000` and pair it with a handoff. The `co
 
 ## Consequences
 
-- Compaction happens earlier and more often, so handoff reliability becomes a hard dependency (see [0007](0007-handoff-degraded-vs-reduced.md) and [0011](0011-handoff-nudge-bounded-channel.md)).
+- Compaction happens earlier and more often, so handoff reliability becomes a hard dependency (see the ADRs in [lossless-handoff](https://github.com/pratikgh0se/lossless-handoff/tree/main/docs/adr)).
 - Context percentages shift when the window variable changes; compare token counts, not percentages.
 - Windows below 40000 are ignored by the CLI.
 

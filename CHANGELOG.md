@@ -4,6 +4,15 @@ All notable changes are recorded here. The format follows [Keep a Changelog](htt
 
 ## [Unreleased]
 
+### Removed
+
+- The handoff system (PreCompact, SessionStart and SessionEnd hooks, recall index, nightly canary, reconcile job, reliability docs and ADRs 0007, 0008, 0011, 0013, 0014). It now lives in [lossless-handoff](https://github.com/pratikgh0se/lossless-handoff). The older entries below describe the removed code.
+- The `--managed-hooks` flag of `setup/bootstrap.sh`.
+
+### Added (handoff pointer)
+
+- `setup/bootstrap.sh --handoff`: an optional step that clones or updates lossless-handoff in `~/CodeBase/lossless-handoff` and runs `./install.sh --no-nudge --canary`.
+
 ### Added
 
 - Handoff hooks 1.10.0 (F46, subagent isolation). A compacting subagent (hook input with `agent_id`) now gets its own handoff built from its own transcript (`<dirname(transcript_path)>/<session>/subagents/agent-<id>.jsonl`) and stored under `<sid>-a-<agent_id>` files, with its own pending marker, agent note, health row (`agent_id`, `agent_type`) and recovery (`HANDOFF RECOVERED`). It never reads or writes the main session's handoff, never merges the decisions ledger and never starts the indexer; a missing subagent transcript is logged as `degraded` / `agent_transcript_missing`. `--reconcile` also counts subagent compactions (`subagent compactions <n> · missed <m>`). `postcompact-inject.py --check` accepts hooks from user or managed settings (`HANDOFF_MANAGED_SETTINGS_PATH` overrides the system path). `setup/bootstrap.sh --managed-hooks` writes a managed-settings file with the handoff hooks and prints the `sudo install` command; it never runs sudo.

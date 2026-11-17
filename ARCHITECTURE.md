@@ -1,6 +1,6 @@
 # Architecture
 
-Bento is three things that share one repo: a marketplace of six Claude Code plugins, a few command-line tools that run on a schedule (token budget, handoff canary), and macOS scripts that install all of it on a machine. This page describes how the parts fit together. Behaviour is specified in [`specs/`](specs/); decisions are recorded in [`docs/adr/`](docs/adr/README.md).
+Bento is three things that share one repo: a marketplace of six Claude Code plugins, a few command-line tools that run on a schedule (token budget), and macOS scripts that install all of it on a machine. This page describes how the parts fit together. Behaviour is specified in [`specs/`](specs/); decisions are recorded in [`docs/adr/`](docs/adr/README.md).
 
 ## Components
 
@@ -9,8 +9,8 @@ flowchart LR
   subgraph repo["machine-setup repo (public)"]
     PL["plugins/ : safety, usage, awareness, agents, dev, compact"]
     SH["shared/ : common TypeScript, copied into each plugin"]
-    HK["claude/hooks/ : PreCompact, SessionStart, Bash guards"]
-    TL["tools/ : token-budget, handoff-canary"]
+    HK["claude/hooks/ : Bash guards"]
+    TL["tools/ : token-budget"]
     ST["setup/ : bootstrap, export, autosync, publish, scans"]
     LD["launchd/ : job templates"]
     TM["claude/ : settings and CLAUDE.md templates"]
@@ -68,17 +68,12 @@ Plain command hooks installed to `~/.claude/hooks/` and registered by the settin
 
 | Hook | Event | Purpose |
 |---|---|---|
-| `precompact-handoff.py` | `PreCompact` | Writes the deterministic handoff file and a health line; also the command-line tool for `--recover`, `--reconcile`, `--prove`, `--claims`, `--claims-lint`. |
-| `postcompact-inject.py` | `SessionStart` (matcher `compact`) | Injects the handoff into the compacted session; flags a degraded one, recovers a missing one, writes proof receipts. `--check` (SessionStart `startup`/`resume`) checks the install. |
-| `claims.json` | none (data) | Register of public claims read by `--prove`, `--claims`, `--claims-lint`. |
 | `no-git-stash.sh` | `PreToolUse` (Bash) | Blocks `git stash` for agents. |
 | `no-root-walks.py` | `PreToolUse` (Bash) | Blocks recursive walks rooted at `/` or the home folder. |
-| `handoff-canary.sh` | none (launchd) | Thin wrapper around `tools/handoff-canary/run.sh`. |
 
 ### Tools
 
 - **token-budget** ([`tools/token-budget`](tools/token-budget/README.md)): weekly probe of always-loaded token overhead (two Haiku calls), deterministic analysis against last week, spend breakdown including risky subagent sessions, and reversible proposals that only a human applies. Spec: [`docs/token-budget-spec.md`](docs/token-budget-spec.md).
-- **handoff-canary** ([`tools/handoff-canary`](tools/handoff-canary/README.md)): nightly end-to-end proof that compaction plus handoff works, using two headless sessions (one with an agent handoff file, one with no agent file, relying on the fresh summary; the canary sets `HANDOFF_SUMMARY_MODEL=haiku` to stay cheap).
 
 ### Scheduled jobs
 
@@ -88,8 +83,6 @@ Rendered from `launchd/*.plist.tmpl` by bootstrap with `--launchd` (placeholders
 |---|---|---|
 | `machine-setup-autosync` | daily 21:00 | `setup/autosync.sh` (installed only when an overlay exists) |
 | `token-budget` | Mondays 09:00, plus once at load | `tools/token-budget/run.sh --catch-up` |
-| `handoff-canary` | daily 03:30, plus once at load | `tools/handoff-canary/run.sh --catch-up` |
-| `handoff-reconcile` | daily 04:15 | `precompact-handoff.py --reconcile --prove --days 30` |
 
 ### Setup scripts
 
@@ -112,51 +105,16 @@ Everything lives under the home directory; nothing is sent anywhere by the plugi
 
 | Path | Written by | Contents |
 |---|---|---|
-| `~/.local/state/claude-handoffs/` | handoff hooks, `compact` plugin, model | `<session>-agent.md` (written by the model), `<session>-agent.meta.json` (written by the plugin), the deterministic handoff files, `<session>-degraded.json`, `<session>-pending.json`, `<session>-a-<agent_id>*` (subagent twins), `health.jsonl`, `reconcile.json`, `receipts.jsonl`, `proofs.jsonl`, `proof-report.md`, `claims-status.json`, `claims-report.md`, `reconcile.log` (full list: [handoff-reliability](docs/handoff-reliability.md#state-files)) |
-| `~/.local/state/handoff-canary/` | handoff canary | `last-run.json`, `runs/` (kept 14 days on failure), logs |
 | `~/.local/state/token-budget/` (mode 700) | token-budget | `ledger.jsonl`, `manifests/`, `proposals/`, `applied.jsonl`, `backups/`, `logs/`, `last-run.json` |
 | `~/.local/state/machine-setup/` | autosync | `autosync.log`, launchd output |
 | `~/.machine-setup-backup/<timestamp>/` | bootstrap | copies of files it replaced |
 | `~/.claude/` | bootstrap | hooks, merged `settings.json`, `CLAUDE.md` |
 
-## Handoff lifecycle
+## Handoff system
 
-Bento keeps the auto-compact window at 400k tokens (`CLAUDE_CODE_AUTO_COMPACT_WINDOW=400000`) instead of the 1M default. A shorter window cuts per-turn cache-read cost (it scales with context size), slows weekly-limit consumption and avoids the quality loss of very long contexts. The price is more compactions, which the handoff is there to make safe ([ADR 0001](docs/adr/0001-compact-window-400k-with-handoff.md)).
+The handoff system (PreCompact and SessionStart hooks, recall index, nightly canary and reliability docs) moved to [lossless-handoff](https://github.com/pratikgh0se/lossless-handoff). Its repo holds the lifecycle, the state locations and the specs.
 
-```mermaid
-sequenceDiagram
-  participant M as Model
-  participant N as compact plugin (nudge)
-  participant CC as Claude Code
-  participant P as PreCompact hook
-  participant S as SessionStart hook
-  participant A as handoffalert mod
-  N->>M: at 75% of window (300k): write your handoff
-  M->>M: write session-agent.md (six headings)
-  Note over CC: compacts at about window minus 33k buffer (about 367k)
-  CC->>P: PreCompact
-  P->>P: build handoff around the agent file (if fresh)
-  P->>P: add fresh Sonnet summary (REDUCED if no fresh agent file, logged only)
-  P->>P: append line to health.jsonl
-  CC->>S: SessionStart (compact)
-  S->>M: "Context was compacted. Read the handoff first..."
-  opt DEGRADED (section errors, stale or missing, fallback failed)
-    S->>M: warning line
-    A->>A: toast and band chip
-  end
-```
-
-1. **Nudge.** At 75% of the window (300k with the default setting), and again every 50k tokens, the `compact` plugin's `nudge` mod appends one short note to the next tool result asking the model to write `~/.local/state/claude-handoffs/<session>-agent.md` with six headings: Goal, Decisions and why, Done, In progress, Dead ends, Exact next step. The plugin never writes the body; it writes a meta file (counts and timestamps only) and tracks staleness of the two volatile headings.
-2. **Compaction.** Claude Code compacts at roughly the window minus a ~33k buffer (about 367k for a 400k window), so the nudge fires with margin.
-3. **PreCompact hook.** `precompact-handoff.py` writes the deterministic handoff: a facts dump (recent user messages, decisions, files, tasks, agents) around the agent file when it is fresh. On every compaction (fresh agent file or not) it also runs a fresh Sonnet summary of the recent conversation and adds it as its own section ([ADR 0013](docs/adr/0013-fresh-summary-at-compaction.md)). With no fresh agent file but a working summary the state is **REDUCED** and is only logged. If a section errored, the agent file is stale with stale sections, or the agent file is missing and the summary also failed, the state is **DEGRADED**: a toast, a band chip (`handoffalert` mod) and a warning to the model ([ADR 0007](docs/adr/0007-handoff-degraded-vs-reduced.md)).
-4. **SessionStart(compact) hook.** `postcompact-inject.py` injects "Context was compacted. Read `<file>` first..." with the handoff content, once. The `resume` mod covers the `/handoff` and agent-file case at the plugin level.
-   The same hooks keep a per-project decisions ledger keyed by git root: at each compaction Sonnet merges the old ledger with the new segment, code validates it, and decisions are superseded, never deleted. Entries carry a kind tag (`[rule]`, `[decision]`, `[task]`); finished tasks are RESOLVED (kept, never injected). It is injected losslessly in up to three parts (`--ledger --part 1|2|3`, each under 10,000 chars; also at startup and resume): standing rules in full first, then decisions, then tasks, and a one-line index for every entry that did not fit in full. Subagent compactions are skipped (health line `status: subagent`; Claude Code 2.1.316 does not yet mark them in the PreCompact input, see the `is_subagent` comment). Hook crashes append a trace to `~/.local/state/claude-handoffs/hooks-error.jsonl`. `python3 claude/hooks/precompact-handoff.py --ledger-maintain <dir>` runs a one-time KIND/RESOLVE/SUPERSEDE clean-up of an existing ledger (backup first). The authority line: the user's latest words, then the ledger, then the agent note, then the fresh summary, then Claude Code's summary, then facts ([ADR 0014](docs/adr/0014-project-decisions-ledger.md)). In the old-decision quiz it raised the score from 13.5 to 56.2 out of 100 (ceiling 61.1).
-   Env switches: `HANDOFF_LEDGER=0` disables the ledger, `HANDOFF_LEDGER_MODEL` picks its model (also used by `--ledger-maintain`, fixed 300 s timeout), `HANDOFF_LEDGER_TIMEOUT` sets the merge timeout in seconds (1 to 300, default 100, independent of the summary timeout; the PreCompact hook timeout is 150), `HANDOFF_SUMMARY=0` disables the summary, `HANDOFF_SUMMARY_MODEL` picks the model (default `sonnet`), `HANDOFF_SUMMARY_TIMEOUT` sets the timeout in seconds (1 to 300, default 75).
-5. **Health log.** Every compaction appends a line to `~/.local/state/claude-handoffs/health.jsonl`. The weekly token-budget report summarises it (rule R12 flags a high degraded rate).
-6. **Misses, subagents, proof.** PreCompact writes a pending marker and a deterministic handoff before any model call; if a compaction still has no handoff the SessionStart hook rebuilds one (`HANDOFF RECOVERED`); a compacting subagent gets its own handoff from its own transcript; every injected handoff leaves a receipt that a nightly `--reconcile --prove` job checks. Details: [`docs/handoff-reliability.md`](docs/handoff-reliability.md).
-7. **Nightly canary.** A launchd job at 03:30 drives two headless sessions past a compaction each and checks the whole chain; a failure raises a macOS notification and is counted in the weekly report.
-
-The handoff directory is outside `~/.claude` because Claude Code denies the model writes under its own config directory ([ADR 0008](docs/adr/0008-handoffs-directory-under-local-state.md)). Specs: [`specs/compact.md`](specs/compact.md) (F33, F35, F36), [`specs/handoff-hooks-spec.md`](specs/handoff-hooks-spec.md).
+This repo keeps the 400k auto-compact window ([ADR 0001](docs/adr/0001-compact-window-400k-with-handoff.md)) and the `compact` plugin, which nudges the model and shows the handoff state. Run `setup/bootstrap.sh --handoff` to install lossless-handoff with `--no-nudge`, because the `compact` plugin already nudges.
 
 ## Public and private repos, autosync and publish
 

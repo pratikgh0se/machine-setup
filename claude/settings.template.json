@@ -6,7 +6,6 @@
   },
   "permissions": {
     "allow": [
-      "Edit(~/.local/state/claude-handoffs/**)",
       "Bash(ps:*)",
       "Bash(grep:*)",
       "Bash(tail:*)",
@@ -17,8 +16,7 @@
       "Bash(git log:*)",
       "Bash(git status:*)",
       "Bash(git diff:*)",
-      "Bash(git show:*)",
-      "Bash(python3 ~/.claude/hooks/recall.py:*)"
+      "Bash(git show:*)"
     ],
     "deny": [
       "Read(**/node_modules/**)",
@@ -28,57 +26,12 @@
   },
   "model": "opus",
   "hooks": {
-    "SessionStart": [
-      {
-        "matcher": "compact",
-        "hooks": [
-          { "type": "command", "command": "python3 __HOME__/.claude/hooks/postcompact-inject.py --part 1", "timeout": 10 },
-          { "type": "command", "command": "python3 __HOME__/.claude/hooks/postcompact-inject.py --part 2", "timeout": 10 },
-          { "type": "command", "command": "python3 __HOME__/.claude/hooks/postcompact-inject.py --part 3", "timeout": 10 },
-          { "type": "command", "command": "python3 __HOME__/.claude/hooks/postcompact-inject.py --ledger --part 1", "timeout": 10 },
-          { "type": "command", "command": "python3 __HOME__/.claude/hooks/postcompact-inject.py --ledger --part 2", "timeout": 10 },
-          { "type": "command", "command": "python3 __HOME__/.claude/hooks/postcompact-inject.py --ledger --part 3", "timeout": 10 }
-        ]
-      },
-      {
-        "matcher": "startup",
-        "hooks": [
-          { "type": "command", "command": "python3 __HOME__/.claude/hooks/postcompact-inject.py --ledger --part 1", "timeout": 10 },
-          { "type": "command", "command": "python3 __HOME__/.claude/hooks/postcompact-inject.py --ledger --part 2", "timeout": 10 },
-          { "type": "command", "command": "python3 __HOME__/.claude/hooks/postcompact-inject.py --ledger --part 3", "timeout": 10 },
-          { "type": "command", "command": "python3 __HOME__/.claude/hooks/postcompact-inject.py --check", "timeout": 5 }
-        ]
-      },
-      {
-        "matcher": "resume",
-        "hooks": [
-          { "type": "command", "command": "python3 __HOME__/.claude/hooks/postcompact-inject.py --ledger --part 1", "timeout": 10 },
-          { "type": "command", "command": "python3 __HOME__/.claude/hooks/postcompact-inject.py --ledger --part 2", "timeout": 10 },
-          { "type": "command", "command": "python3 __HOME__/.claude/hooks/postcompact-inject.py --ledger --part 3", "timeout": 10 },
-          { "type": "command", "command": "python3 __HOME__/.claude/hooks/postcompact-inject.py --check", "timeout": 5 }
-        ]
-      }
-    ],
     "PreToolUse": [
       {
         "matcher": "Bash",
         "hooks": [
           { "type": "command", "command": "__HOME__/.claude/hooks/no-git-stash.sh" },
           { "type": "command", "command": "__HOME__/.claude/hooks/no-root-walks.py" }
-        ]
-      }
-    ],
-    "SessionEnd": [
-      {
-        "hooks": [
-          { "type": "command", "command": "python3 __HOME__/.claude/hooks/recall.py session-end", "timeout": 5 }
-        ]
-      }
-    ],
-    "PreCompact": [
-      {
-        "hooks": [
-          { "type": "command", "command": "python3 __HOME__/.claude/hooks/precompact-handoff.py", "timeout": 150 }
         ]
       }
     ]

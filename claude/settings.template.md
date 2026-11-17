@@ -7,12 +7,9 @@
 | `cleanupPeriodDays` | How long Claude Code keeps session transcripts before deleting them. |
 | `env.CLAUDE_CODE_SUBAGENT_MODEL` | Default model for subagents that do not name one. A cost safety net for the delegation policy in `CLAUDE.md.template`. |
 | `env.CLAUDE_CODE_AUTO_COMPACT_WINDOW` | Context size (tokens) at which auto-compact triggers. |
-| `permissions.allow` | Tool calls that never prompt. Keep to read-only commands plus the handoff directory the compact hooks write to. |
+| `permissions.allow` | Tool calls that never prompt. Keep to read-only commands. |
 | `permissions.deny` | Tool calls that are always refused. Add folders you never want read (the template blocks build output and `node_modules`). |
 | `model` | Default model for the main thread. |
-| `hooks.SessionStart` (matcher `compact`) | Re-injects the handoff written before a compaction (`claude/hooks/postcompact-inject.py`). Six commands: `--part 1`, `--part 2` and `--part 3` (each hook's `additionalContext` is capped at 10,000 chars, so a long handoff is split across up to three), then `--ledger --part 1`, `--ledger --part 2` and `--ledger --part 3` (F42.3: the project's whole active ledger in up to three parts, each under 10,000 chars: standing rules in full first, then decisions, then tasks, with a one-line index for every entry not shown in full). |
-| `hooks.SessionStart` (matchers `startup`, `resume`) | `postcompact-inject.py --ledger --part 1`, `--part 2` and `--part 3` print the same prioritised three-part ledger (the per-project ledger the PreCompact hook maintains under `~/.local/state/claude-handoffs/projects/`) into new and resumed sessions. Read-only, no model call. Plain `--ledger` equals `--part 1`. |
-| `hooks.PreCompact` (timeout 150 s) | Writes the deterministic handoff file before compaction (`claude/hooks/precompact-handoff.py`, always exits 0). The summary call and the ledger merge each have their own timeout (`HANDOFF_SUMMARY_TIMEOUT` default 75 s, `HANDOFF_LEDGER_TIMEOUT` default 100 s) and run in parallel. |
 | `hooks.PreToolUse` (Bash) | `no-git-stash.sh` blocks stashing by agents; `no-root-walks.py` blocks recursive commands rooted at `/`, `/Users` or the home folder. |
 | `statusLine` | Command whose output is the status line. The template uses `ccusage` (`npm install -g ccusage`). Remove if you do not use it. |
 | `enabledPlugins` | Plugins switched on. The six `@bento` ids come from this repo's marketplace. |
@@ -25,4 +22,4 @@
 | `autoMode.soft_deny` / `autoMode.environment` | Classifier guidance for auto mode: extra soft-deny rules (keep `$defaults`) and plain-text lines describing your repos, trusted domains and sensitive locations. Empty here. |
 | `outputStyle` | Output style name. |
 
-Handoff directory: the hooks use `~/.local/state/claude-handoffs`, because Claude Code treats everything under `~/.claude/` as sensitive and denies model writes there. See `specs/handoff-hooks-spec.md`.
+The handoff hooks (PreCompact, SessionStart, SessionEnd) are not in this template. They now live in [lossless-handoff](https://github.com/pratikgh0se/lossless-handoff). Its `install.sh` adds them to `settings.json`.

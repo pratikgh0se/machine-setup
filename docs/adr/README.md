@@ -10,11 +10,6 @@ Decisions that shaped Bento, in MADR-lite form (Status, Date, Context, Decision,
 | [0004](0004-model-delegation-policy.md) | Model delegation policy (orchestrator, builder, gatherer) | Accepted | 2026-10-11 |
 | [0005](0005-mods-add-zero-model-context.md) | Mods add (near) zero tokens to model context | Accepted | 2026-10-11 |
 | [0006](0006-subagent-nesting-guard.md) | Subagents never spawn subagents, with a nesting guard | Accepted | 2026-10-15 |
-| [0007](0007-handoff-degraded-vs-reduced.md) | Handoff states: DEGRADED loud, REDUCED logged only | Accepted | 2026-10-16 |
-| [0008](0008-handoffs-directory-under-local-state.md) | Handoffs live in `~/.local/state/claude-handoffs` | Accepted | 2026-10-15 |
 | [0009](0009-mission-board-replaces-external-progress-plugin.md) | Mission Board replaces an external progress plugin | Accepted | 2026-10-12 |
 | [0010](0010-rtk-integrated-headroom-skipped.md) | RTK integrated, Headroom skipped for now | Accepted | 2026-10-12 |
-| [0011](0011-handoff-nudge-bounded-channel.md) | Handoff nudge through a bounded model-facing channel | Accepted | 2026-10-15 |
 | [0012](0012-public-push-gate.md) | Public push gate | Accepted | 2026-10-18 |
-| [0013](0013-fresh-summary-at-compaction.md) | Fresh Sonnet summary at every compaction | Accepted | 2026-10-23 |
-| [0014](0014-project-decisions-ledger.md) | Hook-owned project decisions ledger | Accepted | 2026-10-25 |
