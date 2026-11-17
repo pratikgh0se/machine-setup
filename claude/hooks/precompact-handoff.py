@@ -2220,7 +2220,7 @@ def prove(days=7):
     _before = list(_OUTLOG)  # reconcile's lines when run together
     _out(line)
     try:
-        rep_lines = ["# Proof report", "", line, ""] + _before + ([""] if _before else [])
+        rep_lines = [line, ""] + _before + ([""] if _before else [])
         rep_lines += fails + ([""] if fails else [])
         rep_lines += [f"skipped {c}: {why or 'n/a'} x{n}" for (c, why), n in sorted(skips.items())]
         write_atomic(os.path.join(HANDOFFS_DIR, "proof-report.md"), "\n".join(rep_lines) + "\n")
