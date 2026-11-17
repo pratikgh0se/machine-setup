@@ -89,5 +89,6 @@ All in `~/.local/state/claude-handoffs/` unless noted.
 | `reconcile.json` | Last reconcile result, plus the notice marker for `--check` |
 | `receipts.jsonl`, `proofs.jsonl`, `proof-report.md`, `proof-notice.json` | Proof (above) |
 | `claims-status.json`, `claims-report.md` | Claims evaluation |
+| `claims-notice.json` | Once-only tracker for the claims alert in `--check` (like `proof-notice.json`) |
 | `reconcile.log` | Output of the nightly job |
 | `~/.claude/hooks/.handoff-manifest.json` | Installed hook file hashes |

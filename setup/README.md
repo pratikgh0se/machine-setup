@@ -7,3 +7,5 @@ Scripts: `bootstrap.sh`, `export.sh`, `autosync.sh`, `publish.sh`, `secret-scan.
 Export never overwrites a public file that is newer in the repo than the live copy (repo commits after the live mtime, or uncommitted changes): it prints `skip (repo newer) <rel>` (`would skip` with `--dry-run`), so a version committed but not yet installed live is not reverted.
 
 Autosync commits the public repo locally and never pushes it; after review you publish with `setup/publish.sh --push` (run it without arguments to see what is pending).
+
+`bootstrap.sh --managed-hooks` is a standalone mode: it writes `~/.local/state/machine-setup/managed-settings.json` (the handoff hooks, merged over any existing system file) and prints a `sudo install` command for you to run. It never runs sudo. See [`docs/handoff-reliability.md`](../docs/handoff-reliability.md).
