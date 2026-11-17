@@ -10,7 +10,7 @@ if os.environ.get("HANDOFF_HOOK_CHILD"):  # spawned by our own summary call: nev
     sys.exit(0)
 
 _T0 = time.monotonic()
-HOOK_VERSION = "1.9.0"
+HOOK_VERSION = "1.10.0"
 HOME = os.path.expanduser("~")
 HANDOFFS_DIR = (os.environ.get("HANDOFF_STATE_DIR") or "").strip() or os.path.join(HOME, ".local", "state", "claude-handoffs")
 HEALTH_FILE = os.path.join(HANDOFFS_DIR, "health.jsonl")
@@ -1180,7 +1180,9 @@ def build(d, info, mode=None):
     tp = d.get("transcript_path", "")
     now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
     header = (f"# Handoff (pre-compaction)\n- session: {sid}\n- cwd: {cwd}\n- trigger: {'recovered' if mode == 'recover' else d.get('trigger')}\n"
-              f"- time: {now}\n- transcript: {tp}\n{AUTHORITY}{recall_line()}")
+              f"- time: {now}\n- transcript: {tp}\n"
+              + (f"- agent: {d.get('agent_id')} ({d.get('agent_type') or 'unknown type'}), a subagent of this session\n"
+                 if agent_id_of(d) else "") + f"{AUTHORITY}{recall_line()}")
     footer = f"\nFull transcript: {tp}. Read it for exact details before guessing.\n"
     P = parse(tp, before_last_boundary=(mode == "recover"))
     if "toplevel" in FAULTS:
@@ -1206,7 +1208,7 @@ def build(d, info, mode=None):
     # F39: ledger root, previous active lines (for the summary), merge thread
     led = {"status": "disabled", "restored": 0}
     root = None
-    if ledger_enabled() and not nomodel:
+    if ledger_enabled() and not nomodel and not info.get("no_ledger"):  # F46.b: only the main session merges the ledger
         root = project_root(cwd)
         led["status"] = "none" if root is None else "pending"
     prev_active = []
@@ -1392,6 +1394,35 @@ def log_error(sid, exc):
         pass
 
 
+def agent_id_of(d):
+    """F46.a: a non-empty string `agent_id` marks a subagent event."""
+    aid = d.get("agent_id")
+    return aid.strip() if isinstance(aid, str) and aid.strip() else None
+
+
+def agent_view(d):
+    """F46.a: for a subagent event return (view, key, found): `view` is a copy of the hook input whose session_id is the
+    per-agent key `<sid>-a-<agent_id>` and whose transcript_path is the subagent's own transcript
+    `<dirname(transcript_path)>/<session_id>/subagents/agent-<agent_id>.jsonl`; `found` says whether that file exists.
+    Returns None for a main-agent event."""
+    aid = agent_id_of(d)
+    if not aid:
+        return None
+    psid = str(d.get("session_id") or "unknown")
+    key = f"{psid.replace('/', '_')}-a-{aid.replace('/', '_')}"
+    tp = d.get("transcript_path")
+    if isinstance(tp, str) and "/subagents/" in tp:
+        sub = tp
+    elif isinstance(tp, str) and tp:
+        sub = os.path.join(os.path.dirname(tp), psid, "subagents", f"agent-{aid}.jsonl")
+    else:
+        sub = ""
+    v = dict(d)
+    v["session_id"] = key
+    v["transcript_path"] = sub
+    return v, key, bool(sub) and os.path.isfile(sub)
+
+
 def is_subagent(d):
     """F42.5. A subagent compaction is recognised by a non-empty `agent_id` in the input, or a transcript_path under
     /subagents/. Verified against Claude Code 2.1.316 (binary strings, 2026-11-08) and 102 recorded handoffs: the
@@ -1449,7 +1480,19 @@ def main():
         d = {}
     sid_raw = d.get("session_id")
     sid = str(sid_raw or "unknown").replace("/", "_")
-    if is_subagent(d):  # F42.5: health line only; no dump, no latest, no ledger merge, no sidecar, no cleanup
+    av = agent_view(d)
+    if av is not None:  # F46.b: a subagent compaction runs the full pipeline over its OWN transcript, keyed by <sid>-a-<id>
+        d, sid, found = av
+        if not found:
+            try:
+                os.makedirs(HANDOFFS_DIR, exist_ok=True)
+            except Exception:
+                pass
+            sub = {"agent_file": "absent", "stale_sections": [], "fallback": "skipped",
+                   "errors": ["agent_transcript_missing"], "truncated": False, "ledger": "skipped"}
+            write_health(d, sid, sub, "", status_override="degraded", reasons_override=["agent_transcript_missing"])
+            return
+    elif is_subagent(d):  # F42.5 (kept for inputs that mark a subagent only by a /subagents/ transcript path): health line only; no dump, no latest, no ledger merge, no sidecar, no cleanup
         try:
             os.makedirs(HANDOFFS_DIR, exist_ok=True)
         except Exception:
@@ -1461,6 +1504,9 @@ def main():
     info = {"agent_file": "absent", "stale_sections": [], "fallback": "skipped", "errors": [], "truncated": False,
             "ledger": "none" if ledger_enabled() else "disabled", "ledger_active": 0, "ledger_superseded": 0,
             "ledger_resolved": 0, "ledger_restored": 0, "ledger_chars": 0, "ledger_error": ""}
+    if av is not None:
+        info["no_ledger"] = True
+        info["ledger"] = "skipped"
     body = ""
     try:
         try:
@@ -1496,7 +1542,7 @@ def main():
             write_health(d, sid, info, body)
         except BaseException:
             pass
-    if body:
+    if body and av is None:
         start_indexer(d, sid)
     try:
         cutoff = time.time() - 14 * 86400
@@ -1511,8 +1557,10 @@ def main():
         pass
 
 
-def write_health(d, sid, info, body, status_override=None, sidecar=True):
+def write_health(d, sid, info, body, status_override=None, sidecar=True, reasons_override=None):
     status, reasons = compute_status(info)
+    if reasons_override is not None:
+        reasons = list(reasons_override)
     if status_override:
         status = status_override
     elif info.get("hard_error"):
@@ -1542,6 +1590,11 @@ def write_health(d, sid, info, body, status_override=None, sidecar=True):
         "hook_version": HOOK_VERSION,
         "canary_child": bool(os.environ.get("HANDOFF_CANARY")),
     }
+    if agent_id_of(d):  # F46.b
+        line["agent_id"] = agent_id_of(d)
+        line["agent_type"] = d.get("agent_type") if isinstance(d.get("agent_type"), str) else ""
+    if reasons_override is not None:
+        line["reasons"] = list(reasons_override)
     try:  # F45.a: the run finished (or failed visibly): the pending marker has done its job
         if status_override == "subagent":
             raise OSError("a subagent run never owns the parent's marker")
@@ -1583,12 +1636,17 @@ def recover():
         if not isinstance(d, dict):
             d = {}
         sid = str(d.get("session_id") or "unknown").replace("/", "_")
+        av = agent_view(d)
+        if av is not None:  # F46.c: recovery for a subagent reads its own transcript and writes <key> files
+            d, sid, _found = av
         tp = d.get("transcript_path")
         if not isinstance(tp, str) or not os.path.isfile(tp):
             _out(json.dumps({"ok": False, "error": f"transcript not found: {str(tp)[:200]}"}))
             return
         d = dict(d)
         d["trigger"] = "recovered"
+        if av is not None:
+            d["agent_id"], d["agent_type"] = av[0].get("agent_id"), av[0].get("agent_type")
         os.makedirs(HANDOFFS_DIR, exist_ok=True)
         info = {"agent_file": "absent", "stale_sections": [], "fallback": "skipped", "errors": [], "truncated": False,
                 "ledger": "skipped"}
@@ -1623,12 +1681,41 @@ def _iso_epoch(v):
         return None
 
 
+def _scan_transcript(path, start_ms, now):
+    """(boundaries in window, latest boundary ms, first entrypoint) for one transcript; never raises."""
+    n, last, ent = 0, None, None
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                has_b = "compact_boundary" in line
+                has_e = ent is None and '"entrypoint"' in line
+                if not (has_b or has_e):
+                    continue
+                try:
+                    o = json.loads(line)
+                except Exception:
+                    continue
+                if not isinstance(o, dict):
+                    continue
+                if ent is None and isinstance(o.get("entrypoint"), str):
+                    ent = o["entrypoint"]
+                if has_b and is_boundary(o):
+                    t = ts_ms(o.get("timestamp"))
+                    if t is not None and t >= start_ms and t <= now * 1000.0 + 60000:
+                        n += 1
+                        last = t if last is None or t > last else last
+    except Exception:
+        pass
+    return n, last, ent
+
+
 def reconcile(days=7):
-    """F45.c: count compact_boundary records in main transcripts against health.jsonl rows; print the summary line and
-    one line per missed interactive session; write <HANDOFFS_DIR>/reconcile.json. Never raises; always exit 0."""
+    """F45.c/F46.d: count compact_boundary records in main transcripts (and, per agent, in
+    <project>/<session>/subagents/agent-*.jsonl) against health.jsonl rows; print the summary line, the subagent line and
+    one line per missed session; write <HANDOFFS_DIR>/reconcile.json. Never raises; always exit 0."""
     now = time.time()
     start_ms = (now - days * 86400) * 1000.0
-    rows = {}  # sid8 -> [(epoch, trigger)]
+    rows = {}  # sid8 -> [(epoch, trigger, agent_id or "")]
     canary_sids = set()
     try:
         with open(HEALTH_FILE, encoding="utf-8", errors="replace") as f:
@@ -1644,48 +1731,54 @@ def reconcile(days=7):
                 e = _iso_epoch(r.get("ts"))
                 if e is None:
                     continue
-                rows.setdefault(str(r.get("sid") or ""), []).append((e, r.get("trigger")))
+                aid = r.get("agent_id")
+                rows.setdefault(str(r.get("sid") or ""), []).append(
+                    (e, r.get("trigger"), aid if isinstance(aid, str) else ""))
     except Exception:
         pass
-    sessions = []
     base = os.path.join(os.path.expanduser("~"), ".claude", "projects")
+
+    def counts(sid8, aid, n):
+        rs = [(e, tr) for e, tr, a in rows.get(sid8, []) if a == aid and e * 1000.0 >= start_ms - 86400000]
+        h = sum(1 for _, tr in rs if tr in ("auto", "manual"))
+        rc = sum(1 for _, tr in rs if tr == "recovered")
+        return h, rc, max(0, n - h - rc)
+    sessions, subs = [], []
     for path in sorted(glob.glob(os.path.join(base, "*", "*.jsonl"))):
         try:
-            if "subagents" in path.split(os.sep) or os.path.getmtime(path) * 1000.0 < start_ms:
+            if os.path.getmtime(path) * 1000.0 < start_ms:
                 continue
             if "handoff-canary" in os.path.basename(os.path.dirname(path)):
                 continue
-            n, last, ent = 0, None, None
-            with open(path, encoding="utf-8", errors="replace") as f:
-                for line in f:
-                    has_b = "compact_boundary" in line
-                    has_e = ent is None and '"entrypoint"' in line
-                    if not (has_b or has_e):
-                        continue
-                    try:
-                        o = json.loads(line)
-                    except Exception:
-                        continue
-                    if not isinstance(o, dict):
-                        continue
-                    if ent is None and isinstance(o.get("entrypoint"), str):
-                        ent = o["entrypoint"]
-                    if has_b and is_boundary(o):
-                        t = ts_ms(o.get("timestamp"))
-                        if t is not None and t >= start_ms and t <= now * 1000.0 + 60000:
-                            n += 1
-                            last = t if last is None or t > last else last
+            n, last, ent = _scan_transcript(path, start_ms, now)
             if n == 0:
                 continue
             sid8 = os.path.basename(path)[:-len(".jsonl")][:8]
             if sid8 in canary_sids:
                 continue
-            rs = [(e, tr) for e, tr in rows.get(sid8, []) if e * 1000.0 >= start_ms - 86400000]
-            h = sum(1 for _, tr in rs if tr in ("auto", "manual"))
-            rc = sum(1 for _, tr in rs if tr == "recovered")
+            h, rc, m = counts(sid8, "", n)
             sessions.append({"sid": sid8, "project": os.path.basename(os.path.dirname(path)),
                              "headless": bool(ent and ent.startswith("sdk")), "boundaries": n, "handoffs": h,
-                             "recovered": rc, "missed": max(0, n - h - rc), "last_boundary": _iso_ms(last)})
+                             "recovered": rc, "missed": m, "last_boundary": _iso_ms(last)})
+        except Exception:
+            continue
+    for path in sorted(glob.glob(os.path.join(base, "*", "*", "subagents", "agent-*.jsonl"))):
+        try:
+            if os.path.getmtime(path) * 1000.0 < start_ms:
+                continue
+            proj = os.path.basename(os.path.dirname(os.path.dirname(os.path.dirname(path))))
+            if "handoff-canary" in proj:
+                continue
+            n, last, ent = _scan_transcript(path, start_ms, now)
+            if n == 0:
+                continue
+            sid8 = os.path.basename(os.path.dirname(os.path.dirname(path)))[:8]
+            if sid8 in canary_sids:
+                continue
+            aid = os.path.basename(path)[len("agent-"):-len(".jsonl")]
+            h, rc, m = counts(sid8, aid, n)
+            subs.append({"sid": sid8, "agent_id": aid, "project": proj, "boundaries": n, "handoffs": h,
+                         "recovered": rc, "missed": m, "last_boundary": _iso_ms(last)})
         except Exception:
             continue
     killed = 0
@@ -1694,6 +1787,8 @@ def reconcile(days=7):
             sid8 = os.path.basename(pf)[:8]
             if sid8 in canary_sids:
                 continue
+            stem = os.path.basename(pf)[:-len("-pending.json")]
+            aid = stem.split("-a-", 1)[1] if "-a-" in stem else ""
             pts = None
             try:
                 with open(pf, encoding="utf-8") as f:
@@ -1702,24 +1797,30 @@ def reconcile(days=7):
                 pass
             if pts is None:
                 pts = os.path.getmtime(pf)
-            if now - pts > 200 and pts * 1000.0 >= start_ms and not any(e >= pts for e, _ in rows.get(sid8, [])):
+            if now - pts > 200 and pts * 1000.0 >= start_ms and \
+                    not any(e >= pts for e, _, a in rows.get(sid8, []) if a == aid):
                 killed += 1
         except Exception:
             continue
     tot = {k: sum(s[k] for s in sessions) for k in ("boundaries", "handoffs", "recovered", "missed")}
     mi = sum(s["missed"] for s in sessions if not s["headless"])
     mh = sum(s["missed"] for s in sessions if s["headless"])
+    sub_n, sub_m = sum(s["boundaries"] for s in subs), sum(s["missed"] for s in subs)
     _out(f"compactions {tot['boundaries']} · handoffs {tot['handoffs']} · recovered {tot['recovered']} · "
          f"missed {tot['missed']} (interactive {mi}, headless {mh}) · killed {killed}")
+    _out(f"subagent compactions {sub_n} · missed {sub_m}")
     for s in sorted([s for s in sessions if s["missed"] and not s["headless"]], key=lambda s: s["last_boundary"], reverse=True):
         _out(f"missed {s['missed']} {s['sid']} {s['project']} {s['last_boundary']}")
+    for s in sorted([s for s in subs if s["missed"]], key=lambda s: s["last_boundary"], reverse=True):
+        _out(f"missed {s['missed']} {s['sid']} agent {s['agent_id']} {s['project']} {s['last_boundary']}")
     try:
         os.makedirs(HANDOFFS_DIR, exist_ok=True)
         rp = os.path.join(HANDOFFS_DIR, "reconcile.json")
         out = {"ts": datetime.datetime.fromtimestamp(now, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                "days": days, "compactions": tot["boundaries"], "handoffs": tot["handoffs"],
                "recovered": tot["recovered"], "missed": tot["missed"], "missed_interactive": mi,
-               "missed_headless": mh, "killed": killed, "sessions": sessions}
+               "missed_headless": mh, "killed": killed, "subagent_compactions": sub_n, "subagent_missed": sub_m,
+               "sessions": sessions, "subagent_sessions": subs}
         try:
             with open(rp, encoding="utf-8") as f:
                 old = json.load(f)

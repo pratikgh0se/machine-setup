@@ -77,7 +77,7 @@ HARD_MAX = 9900    # each part's total output (warning + header + content + cont
 INLINE_MAX = 9700  # content target per part
 NAMES_MAX = 150    # the section-name list in a continuation line is cut to this many chars
 MAX_PARTS = 3      # F37.6
-HOOK_VERSION = "1.9.0"
+HOOK_VERSION = "1.10.0"
 _SID = ["unknown"]
 
 
@@ -388,7 +388,7 @@ def fit_recovered(txt):
     return out if total(out) <= HARD_MAX else out[: max(HARD_MAX - len(RECOVERED_FIRST) - len(PREFIX) - 1, 0)]
 
 
-def try_recover(d):
+def try_recover(d, sid):
     """F45.b: run `precompact-handoff.py --recover` with the same hook JSON (deadline 6 s). Returns the text to emit, or
     None after logging to hooks-error.jsonl (the caller then falls back to the DEGRADED text)."""
     try:
@@ -407,7 +407,6 @@ def try_recover(d):
                 continue
         if not isinstance(res, dict) or res.get("ok") is not True:
             raise RuntimeError("recovery failed: " + str((res or {}).get("error") or f"exit {r.returncode}")[:200])
-        sid = str(d.get("session_id")).replace("/", "_")
         with open(os.path.join(HANDOFFS_DIR, f"{sid}-latest.md"), encoding="utf-8", errors="replace") as f:
             txt = f.read().strip()
         if not txt:
@@ -442,19 +441,34 @@ def check_mode():
     except Exception:
         st = None
         problems.append("settings.json unreadable")
+    managed = None  # F46.g: managed settings (system level) count as well as user settings
+    try:
+        mpath = (os.environ.get("HANDOFF_MANAGED_SETTINGS_PATH") or "").strip() or (
+            "/Library/Application Support/ClaudeCode/managed-settings.json" if sys.platform == "darwin"
+            else "/etc/claude-code/managed-settings.json")
+        if os.path.isfile(mpath):
+            with open(mpath, encoding="utf-8") as f:
+                managed = json.load(f)
+            if not isinstance(managed, dict):
+                managed = None
+    except Exception:
+        managed = None
+    if st is None and managed is not None and not os.path.exists(os.path.join(home, ".claude", "settings.json")):
+        problems.clear()  # no user settings file at all, but the managed file is there: not a problem
 
     def runs(event, script, need_compact):
-        try:
-            for g in (st.get("hooks") or {}).get(event) or []:
-                if need_compact and "compact" not in str(g.get("matcher") or ""):
-                    continue
-                for h in g.get("hooks") or []:
-                    if script in str(h.get("command") or ""):
-                        return True
-        except Exception:
-            pass
+        for src in (st, managed):
+            try:
+                for g in (src.get("hooks") or {}).get(event) or []:
+                    if need_compact and "compact" not in str(g.get("matcher") or ""):
+                        continue
+                    for h in g.get("hooks") or []:
+                        if script in str(h.get("command") or ""):
+                            return True
+            except Exception:
+                pass
         return False
-    if st is not None:
+    if st is not None or managed is not None:
         if not runs("PreCompact", "precompact-handoff.py", False):
             problems.append("no PreCompact hook runs precompact-handoff.py")
         if not runs("SessionStart", "postcompact-inject.py", True):
@@ -523,6 +537,9 @@ try:
     d = json.load(sys.stdin)
     sid = d.get("session_id")
     sid = sid.replace("/", "_") if isinstance(sid, str) else ""  # same rule as precompact-handoff.py; non-string = silent
+    _aid = d.get("agent_id")
+    if sid and isinstance(_aid, str) and _aid.strip():  # F46.c: a subagent reads and writes only its own <sid>-a-<id> files
+        sid = f"{sid}-a-{_aid.strip().replace('/', '_')}"
     _SID[0] = sid or "unknown"
     if sid:
         p = os.path.join(HANDOFFS_DIR, f"{sid}-latest.md")
@@ -544,7 +561,7 @@ try:
             if need and PART in (2, 3):
                 raise SystemExit(0)
             if need:
-                rec = try_recover(d)
+                rec = try_recover(d, sid)
                 if rec is not None:
                     emit(rec)
                     raise SystemExit(0)
