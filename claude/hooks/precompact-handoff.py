@@ -2159,6 +2159,32 @@ def _rkey(r):
     return (str(r.get("ts")), str(r.get("sid")), str(r.get("agent_id") or ""))
 
 
+def resolve_boundary(rc):
+    """F47 ruling: the receipt's boundary_ts is only a hint (SessionStart runs before Claude Code flushes the current
+    compact_boundary). The boundary is the latest compact_boundary in the receipt's transcript whose timestamp is at
+    most the receipt ts plus 10 s; None when there is none."""
+    tp = rc.get("transcript")
+    limit = (_iso_epoch(rc.get("ts")) or 0) * 1000.0 + 10000
+    best, best_ms = None, None
+    try:
+        with open(tp, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                if "compact_boundary" not in line:
+                    continue
+                try:
+                    o = json.loads(line)
+                except Exception:
+                    continue
+                if not is_boundary(o):
+                    continue
+                t = ts_ms(o.get("timestamp"))
+                if t is not None and t <= limit and (best_ms is None or t >= best_ms):
+                    best, best_ms = o.get("timestamp"), t
+    except Exception:
+        return None
+    return best
+
+
 def prove(days=7):
     """F47.b: verdicts for receipts in the window, appended to proofs.jsonl; prints the summary line; writes
     proof-report.md and (F48) claims-status.json / claims-report.md. Never raises."""
@@ -2177,6 +2203,7 @@ def prove(days=7):
         if k in have:
             continue
         checks, details = {}, {}
+        rc = dict(rc, boundary_ts=resolve_boundary(rc))
         for name, fn in (("lossless", check_lossless), ("right_agent", check_right_agent),
                          ("delivered", check_delivered), ("decisions_safe", lambda r: check_decisions_safe(r, health))):
             try:
@@ -2186,7 +2213,7 @@ def prove(days=7):
                 log_error(rc.get("key") or "unknown", e)
             checks[name], details[name] = v, why[:200]
         row = {"ts": run_ts, "receipt_ts": rc.get("ts"), "sid": rc.get("sid"), "agent_id": rc.get("agent_id"),
-               "checks": checks, "details": details}
+               "boundary_ts": rc.get("boundary_ts"), "checks": checks, "details": details}
         new_rows.append(row)
         have[k] = row
     if new_rows:
