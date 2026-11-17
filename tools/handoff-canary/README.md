@@ -16,3 +16,5 @@ tools/handoff-canary/run.sh --probe     # re-check mode after a CLI upgrade: var
 - Exit: 0 pass/skip, 1 fail, 2 usage or lock held, 3 isolation violated.
 - Schedule: `launchd/handoff-canary.plist.tmpl` (daily 03:30, installed by `setup/bootstrap.sh --launchd`). `check.py` is the pure checker; `claude/hooks/handoff-canary.sh` is a thin wrapper.
 - Test seams: `HANDOFF_CANARY_STATE_DIR`, `HANDOFF_HEALTH_FILE`, `HANDOFF_CANARY_NOW`.
+
+The canary proves the chain once a night on isolated state. Real compactions are covered by the 04:15 reconcile and proof job: see [`docs/handoff-reliability.md`](../../docs/handoff-reliability.md).

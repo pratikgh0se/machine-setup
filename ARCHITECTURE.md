@@ -68,8 +68,9 @@ Plain command hooks installed to `~/.claude/hooks/` and registered by the settin
 
 | Hook | Event | Purpose |
 |---|---|---|
-| `precompact-handoff.py` | `PreCompact` | Writes the deterministic handoff file and a health line. |
-| `postcompact-inject.py` | `SessionStart` (matcher `compact`) | Injects the handoff into the compacted session; flags a degraded one. |
+| `precompact-handoff.py` | `PreCompact` | Writes the deterministic handoff file and a health line; also the command-line tool for `--recover`, `--reconcile`, `--prove`, `--claims`, `--claims-lint`. |
+| `postcompact-inject.py` | `SessionStart` (matcher `compact`) | Injects the handoff into the compacted session; flags a degraded one, recovers a missing one, writes proof receipts. `--check` (SessionStart `startup`/`resume`) checks the install. |
+| `claims.json` | none (data) | Register of public claims read by `--prove`, `--claims`, `--claims-lint`. |
 | `no-git-stash.sh` | `PreToolUse` (Bash) | Blocks `git stash` for agents. |
 | `no-root-walks.py` | `PreToolUse` (Bash) | Blocks recursive walks rooted at `/` or the home folder. |
 | `handoff-canary.sh` | none (launchd) | Thin wrapper around `tools/handoff-canary/run.sh`. |
@@ -88,6 +89,7 @@ Rendered from `launchd/*.plist.tmpl` by bootstrap with `--launchd` (placeholders
 | `machine-setup-autosync` | daily 21:00 | `setup/autosync.sh` (installed only when an overlay exists) |
 | `token-budget` | Mondays 09:00, plus once at load | `tools/token-budget/run.sh --catch-up` |
 | `handoff-canary` | daily 03:30, plus once at load | `tools/handoff-canary/run.sh --catch-up` |
+| `handoff-reconcile` | daily 04:15 | `precompact-handoff.py --reconcile --prove --days 30` |
 
 ### Setup scripts
 
@@ -110,7 +112,7 @@ Everything lives under the home directory; nothing is sent anywhere by the plugi
 
 | Path | Written by | Contents |
 |---|---|---|
-| `~/.local/state/claude-handoffs/` | handoff hooks, `compact` plugin, model | `<session>-agent.md` (written by the model), `<session>-agent.meta.json` (written by the plugin), the deterministic handoff files, `<session>-degraded.json`, `health.jsonl` |
+| `~/.local/state/claude-handoffs/` | handoff hooks, `compact` plugin, model | `<session>-agent.md` (written by the model), `<session>-agent.meta.json` (written by the plugin), the deterministic handoff files, `<session>-degraded.json`, `<session>-pending.json`, `<session>-a-<agent_id>*` (subagent twins), `health.jsonl`, `reconcile.json`, `receipts.jsonl`, `proofs.jsonl`, `proof-report.md`, `claims-status.json`, `claims-report.md`, `reconcile.log` (full list: [handoff-reliability](docs/handoff-reliability.md#state-files)) |
 | `~/.local/state/handoff-canary/` | handoff canary | `last-run.json`, `runs/` (kept 14 days on failure), logs |
 | `~/.local/state/token-budget/` (mode 700) | token-budget | `ledger.jsonl`, `manifests/`, `proposals/`, `applied.jsonl`, `backups/`, `logs/`, `last-run.json` |
 | `~/.local/state/machine-setup/` | autosync | `autosync.log`, launchd output |
@@ -151,7 +153,8 @@ sequenceDiagram
    The same hooks keep a per-project decisions ledger keyed by git root: at each compaction Sonnet merges the old ledger with the new segment, code validates it, and decisions are superseded, never deleted. Entries carry a kind tag (`[rule]`, `[decision]`, `[task]`); finished tasks are RESOLVED (kept, never injected). It is injected losslessly in up to three parts (`--ledger --part 1|2|3`, each under 10,000 chars; also at startup and resume): standing rules in full first, then decisions, then tasks, and a one-line index for every entry that did not fit in full. Subagent compactions are skipped (health line `status: subagent`; Claude Code 2.1.316 does not yet mark them in the PreCompact input, see the `is_subagent` comment). Hook crashes append a trace to `~/.local/state/claude-handoffs/hooks-error.jsonl`. `python3 claude/hooks/precompact-handoff.py --ledger-maintain <dir>` runs a one-time KIND/RESOLVE/SUPERSEDE clean-up of an existing ledger (backup first). The authority line: the user's latest words, then the ledger, then the agent note, then the fresh summary, then Claude Code's summary, then facts ([ADR 0014](docs/adr/0014-project-decisions-ledger.md)). In the old-decision quiz it raised the score from 13.5 to 56.2 out of 100 (ceiling 61.1).
    Env switches: `HANDOFF_LEDGER=0` disables the ledger, `HANDOFF_LEDGER_MODEL` picks its model (also used by `--ledger-maintain`, fixed 300 s timeout), `HANDOFF_LEDGER_TIMEOUT` sets the merge timeout in seconds (1 to 300, default 100, independent of the summary timeout; the PreCompact hook timeout is 150), `HANDOFF_SUMMARY=0` disables the summary, `HANDOFF_SUMMARY_MODEL` picks the model (default `sonnet`), `HANDOFF_SUMMARY_TIMEOUT` sets the timeout in seconds (1 to 300, default 75).
 5. **Health log.** Every compaction appends a line to `~/.local/state/claude-handoffs/health.jsonl`. The weekly token-budget report summarises it (rule R12 flags a high degraded rate).
-6. **Nightly canary.** A launchd job at 03:30 drives two headless sessions past a compaction each and checks the whole chain; a failure raises a macOS notification and is counted in the weekly report.
+6. **Misses, subagents, proof.** PreCompact writes a pending marker and a deterministic handoff before any model call; if a compaction still has no handoff the SessionStart hook rebuilds one (`HANDOFF RECOVERED`); a compacting subagent gets its own handoff from its own transcript; every injected handoff leaves a receipt that a nightly `--reconcile --prove` job checks. Details: [`docs/handoff-reliability.md`](docs/handoff-reliability.md).
+7. **Nightly canary.** A launchd job at 03:30 drives two headless sessions past a compaction each and checks the whole chain; a failure raises a macOS notification and is counted in the weekly report.
 
 The handoff directory is outside `~/.claude` because Claude Code denies the model writes under its own config directory ([ADR 0008](docs/adr/0008-handoffs-directory-under-local-state.md)). Specs: [`specs/compact.md`](specs/compact.md) (F33, F35, F36), [`specs/handoff-hooks-spec.md`](specs/handoff-hooks-spec.md).
 

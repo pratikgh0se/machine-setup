@@ -106,7 +106,7 @@ Details: [`plugins/compact`](plugins/compact/README.md)
 ## Beyond the plugins
 
 - **Token-budget loop** ([`tools/token-budget`](tools/token-budget/README.md)): a weekly launchd job that measures Claude Code's always-loaded token overhead, reports regressions and spend, and proposes reversible fixes that only you apply.
-- **Handoff hooks** ([`claude/hooks`](claude/settings.template.md)): a `PreCompact` hook that writes a deterministic handoff file and a `SessionStart` hook that re-injects it after compaction, plus guard hooks that block `git stash` and recursive scans from `/` or your home folder. Specified in [`specs/handoff-hooks-spec.md`](specs/handoff-hooks-spec.md).
+- **Handoff hooks** ([`claude/hooks`](claude/settings.template.md)): a `PreCompact` hook that writes a deterministic handoff file and a `SessionStart` hook that re-injects it after compaction, plus guard hooks that block `git stash` and recursive scans from `/` or your home folder. Specified in [`specs/handoff-hooks-spec.md`](specs/handoff-hooks-spec.md). Missed compactions are recovered and counted nightly, subagents get their own handoff, and each handoff leaves a receipt that is checked: see [`docs/handoff-reliability.md`](docs/handoff-reliability.md).
 - **Handoff canary** ([`tools/handoff-canary`](tools/handoff-canary/README.md)): a nightly job that proves compaction plus handoff still works end to end.
 - **Settings and CLAUDE.md templates** ([`claude/settings.template.md`](claude/settings.template.md)): a documented starting point for `~/.claude/settings.json` and a delegation-policy `CLAUDE.md`.
 - **Machine bootstrap** (`setup/`, `launchd/`): scripts that check prerequisites, install this setup, install launchd jobs and scan for secrets before export. See [`setup/README.md`](setup/README.md).
@@ -180,6 +180,7 @@ CI in this repo ([`.github/workflows/leak-scan.yml`](.github/workflows/leak-scan
 |---|---|
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | Components, state locations, handoff lifecycle, testing and delegation models, with diagrams |
 | [`docs/adr/`](docs/adr/README.md) | Architecture decision records |
+| [`docs/handoff-reliability.md`](docs/handoff-reliability.md) | Missed compactions, subagents, headless runs, proof receipts, claims register |
 | [`specs/`](specs/) | Behaviour contracts, one per plugin plus setup and handoff hooks. Where a plugin README and its spec disagree, the code and `plugin.json` are the truth. |
 | [`OVERLAY.md`](OVERLAY.md) | What stays in the private overlay and why |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Process and the checks you can run |
